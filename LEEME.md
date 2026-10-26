@@ -66,10 +66,16 @@ La misma app sirve ahora en móvil/tablet (táctil) y en Smart TV (Android TV, G
 
 ### Modo ligero (TV con poca memoria)
 Se activa solo en una TV de 1 GB de RAM o marcada por el sistema como de poca memoria (en móvil y en TVs con más memoria no cambia nada).
-- Usa la web **móvil** de YouTube (mucho más liviana que la de escritorio), con el texto agrandado un 45 % para leerlo desde el sofá (`TV_TEXT_ZOOM_LITE`).
+- Usa la web **móvil** de YouTube (mucho más liviana que la de escritorio), con el texto agrandado un 20 % (`TV_TEXT_ZOOM_LITE`) y barras más bajas para que la página no quede apretada.
 - Se quitan el ecualizador, el visualizador, el segundo plano (servicio, notificación y bloqueo de Wi-Fi) y los botones de esas funciones; al salir de la app, la página se pausa y libera recursos.
 - Se quedan el nombre **tubeLD**, el bloqueo de anuncios, el modo día/noche y el control remoto (puntero, play/pausa, adelantar y retroceder).
 - Para que el límite sea otro, cambia `1_600_000_000L` en `detectLite()` (MainActivity.kt).
+
+## Modo flechas / modo ratón, calidad y subtítulos (TV)
+- **Botón de flechas/ratón** (arriba a la derecha, solo en TV). **Modo flechas** (el de inicio): ▲▼◀▶ saltan de botón en botón de la página (marco dorado), la página baja sola cuando no hay más abajo, y OK toca lo marcado. Al llegar al borde de arriba/abajo, el foco pasa a las barras. **Modo ratón:** el puntero de siempre. Se recuerda al cerrar.
+- **Botón de calidad** (barra de abajo): lista las calidades del video actual (144p a 4K) y la cambia sin buscar el engranaje del reproductor. Si el video no la ofrece, no aparece. Bajar a 360p o 480p ayuda mucho en una TV de poca memoria.
+- **Pantalla completa:** OK corto pausa o reproduce, ◀▶ saltan 10 s. **OK largo (medio segundo)** activa el puntero sobre el video para llegar a cualquier control; otro OK largo lo quita.
+- **Subtítulos:** el tamaño se limita (15 px antes de la ampliación). Si en algún video siguen grandes, ajusta la regla `.ytp-caption-segment` dentro de `JS_TV`.
 
 ## Descanso visual (luz azul)
 - Botón del **ojo**, arriba a la derecha (junto al sol/luna). Abre un panel con un interruptor y dos barras: **Luz azul** (tiñe la pantalla de cálido) y **Atenuar** (baja el brillo). El botón "Descanso recomendado" pone 60 % y 25 %.

@@ -52,6 +52,17 @@
                 android:textSize="12sp" />
 
             <ImageButton
+                android:id="@+id/btnNav"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Modo ratón o flechas"
+                android:padding="9dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_arrows"
+                android:visibility="gone" />
+
+            <ImageButton
                 android:id="@+id/btnRest"
                 android:layout_width="40dp"
                 android:layout_height="40dp"
@@ -162,6 +173,14 @@
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="Ecualizador"
                 android:src="@drawable/ic_eq" />
+            <ImageButton
+                android:id="@+id/btnQuality"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Calidad del video"
+                android:src="@drawable/ic_quality" />
             <ImageButton
                 android:id="@+id/btnTimer"
                 android:layout_width="0dp"

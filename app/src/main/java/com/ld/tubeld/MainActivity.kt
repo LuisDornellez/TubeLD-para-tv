@@ -112,6 +112,12 @@ class MainActivity : AppCompatActivity() {
 
     // ---- Smart TV (control remoto) ----
     private var isTv = false
+    private lateinit var btnNav: ImageButton
+    private lateinit var btnQuality: ImageButton
+    /** true = flechas (se salta de botón en botón de la página); false = ratón (puntero). */
+    private var navMode = true
+    private var fsPointer = false
+    private var okLong = false
 
     // ---- Descanso visual: tinte cálido (menos luz azul) y atenuado, encima de toda la app ----
     private lateinit var btnRest: ImageButton
@@ -178,6 +184,9 @@ class MainActivity : AppCompatActivity() {
         splash = findViewById(R.id.splash)
         btnExit = findViewById(R.id.btnExit)
         btnRest = findViewById(R.id.btnRest)
+        btnNav = findViewById(R.id.btnNav)
+        btnQuality = findViewById(R.id.btnQuality)
+        navMode = prefs.getBoolean("navmode", true)
         bottomBar = findViewById(R.id.bottomBar)
         divider = findViewById(R.id.divider)
         topBar = findViewById(R.id.topBar)
@@ -251,6 +260,16 @@ class MainActivity : AppCompatActivity() {
         pressFx(btnExit)
         pressFx(btnRest)
         btnRest.setOnClickListener { showRestDialog() }
+        btnQuality.setOnClickListener { showQualityDialog() }
+        btnNav.visibility = if (isTv) View.VISIBLE else View.GONE
+        pressFx(btnNav)
+        btnNav.setOnClickListener {
+            navMode = !navMode
+            prefs.edit().putBoolean("navmode", navMode).apply()
+            applyNavMode()
+            toast(if (navMode) "Modo flechas: ▲▼◀▶ saltan entre botones, OK selecciona" else "Modo ratón: las flechas mueven el puntero")
+        }
+        applyNavMode()
         btnExit.setOnClickListener { showExitDialog() }
         if (savedInstanceState == null) {
             showSplash()
@@ -352,6 +371,7 @@ class MainActivity : AppCompatActivity() {
         val l = ArrayList<View>()
         val bb = bottomBar as ViewGroup
         for (i in 0 until bb.childCount) l.add(bb.getChildAt(i))
+        l.add(btnNav)
         l.add(btnRest)
         l.add(btnTheme)
         l.add(btnExit)
@@ -366,20 +386,22 @@ class MainActivity : AppCompatActivity() {
             lp.height = h
             v.layoutParams = lp
         }
-        size(topBar, 0, dp(72))
+        // En modo ligero las barras son más bajas para dejar más sitio a la página
+        size(topBar, 0, dp(if (lite) 56 else 72))
         topBar.setPadding(dp(36), 0, dp(28), 0)
-        tvLogo.textSize = 28f
-        for (b in listOf(btnRest, btnTheme, btnExit)) {
-            size(b, dp(52), dp(52))
-            b.setPadding(dp(12), dp(12), dp(12), dp(12))
+        tvLogo.textSize = if (lite) 24f else 28f
+        val bs = if (lite) 44 else 52
+        for (b in listOf(btnNav, btnRest, btnTheme, btnExit)) {
+            size(b, dp(bs), dp(bs))
+            b.setPadding(dp(10), dp(10), dp(10), dp(10))
         }
-        size(bottomBar, 0, dp(80))
-        bottomBar.setPadding(dp(56), dp(2), dp(56), dp(8))
+        size(bottomBar, 0, dp(if (lite) 62 else 80))
+        bottomBar.setPadding(dp(56), dp(2), dp(56), dp(if (lite) 4 else 8))
         val bb = bottomBar as ViewGroup
         for (i in 0 until bb.childCount) {
             val b = bb.getChildAt(i) as ImageButton
             b.scaleType = ImageView.ScaleType.FIT_CENTER
-            b.setPadding(dp(8), dp(22), dp(8), dp(22))
+            b.setPadding(dp(8), dp(if (lite) 16 else 22), dp(8), dp(if (lite) 16 else 22))
         }
         for (v in tvFocusables()) {
             v.isFocusable = true
@@ -395,7 +417,7 @@ class MainActivity : AppCompatActivity() {
     private fun applyFocusRings() {
         val p = Pal.cur
         for (v in tvFocusables()) {
-            val top = v === btnRest || v === btnTheme || v === btnExit
+            val top = v === btnNav || v === btnRest || v === btnTheme || v === btnExit
             val ring = GradientDrawable().apply {
                 cornerRadius = dp(16).toFloat()
                 setColor(withA(p.gold, 0x26))
@@ -469,12 +491,35 @@ class MainActivity : AppCompatActivity() {
 
         val cv = customView
         if (cv != null) {
+            // OK corto: pausa/play (o clic si el puntero está activo). OK largo: activa o quita el puntero.
+            if (isOk) {
+                if (down) {
+                    if (e.repeatCount == 1) {
+                        okLong = true
+                        fsPointer = !fsPointer
+                        if (fsPointer) showCursor() else cursor.visibility = View.GONE
+                        toast(if (fsPointer) "Puntero activado (OK largo para quitarlo)" else "Puntero desactivado")
+                    }
+                } else {
+                    if (!okLong) {
+                        if (fsPointer) clickCursor() else runCmd("toggle", 0L)
+                    }
+                    okLong = false
+                }
+                return true
+            }
+            if (fsPointer) {
+                if (down) {
+                    showCursor()
+                    moveCursor(k, e.repeatCount)
+                }
+                return true
+            }
             if (down) {
                 when (k) {
                     KeyEvent.KEYCODE_DPAD_LEFT -> if (e.repeatCount % 4 == 0) runCmd("seekrel", -10_000L)
                     KeyEvent.KEYCODE_DPAD_RIGHT -> if (e.repeatCount % 4 == 0) runCmd("seekrel", 10_000L)
-                    KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> Unit
-                    else -> if (e.repeatCount == 0) runCmd("toggle", 0L)
+                    else -> Unit
                 }
                 sendHover(cv, cv.width / 2f, cv.height / 2f) // hace aparecer los controles del reproductor
             }
@@ -492,6 +537,26 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (!down) return true
+        if (navMode) {
+            if (isOk) {
+                if (e.repeatCount == 0) navClick()
+                return true
+            }
+            val first = e.repeatCount == 0
+            val d = when (k) {
+                KeyEvent.KEYCODE_DPAD_UP -> "u"
+                KeyEvent.KEYCODE_DPAD_DOWN -> "d"
+                KeyEvent.KEYCODE_DPAD_LEFT -> "l"
+                else -> "r"
+            }
+            web.evaluateJavascript("window.__tldNavMove?window.__tldNavMove('$d'):'n'") { r ->
+                val v = (r ?: "").trim('"')
+                if (first && (v == "e" || v == "n")) {
+                    if (d == "u") goToBar(false) else if (d == "d") goToBar(true)
+                }
+            }
+            return true
+        }
         showCursor()
         if (isOk) {
             if (e.repeatCount == 0) clickCursor()
@@ -499,6 +564,91 @@ class MainActivity : AppCompatActivity() {
         }
         moveCursor(k, e.repeatCount)
         return true
+    }
+
+    /** Cambia entre modo flechas y modo ratón (icono, puntero y marco de selección). */
+    private fun applyNavMode() {
+        btnNav.setImageResource(if (navMode) R.drawable.ic_arrows else R.drawable.ic_mouse)
+        if (!isTv) return
+        if (navMode) {
+            handler.removeCallbacks(fadeCursor)
+            cursor.visibility = View.GONE
+        } else {
+            web.evaluateJavascript("window.__tldNavClear&&window.__tldNavClear()", null)
+            if (!focusInBars()) showCursor()
+        }
+    }
+
+    /** Modo flechas: OK toca de verdad el elemento marcado (así funciona igual que un toque con el dedo). */
+    private fun navClick() {
+        web.evaluateJavascript("window.__tldNavPos?window.__tldNavPos():''") { r ->
+            val p = (r ?: "").trim('"').split(",")
+            if (p.size == 2) {
+                val x = p[0].toFloatOrNull()
+                val y = p[1].toFloatOrNull()
+                if (x != null && y != null) {
+                    val d = resources.displayMetrics.density
+                    sendTap(web, x * d, y * d)
+                }
+            }
+        }
+    }
+
+    private fun qualityLabel(q: String): String? = when (q) {
+        "hd2880" -> "2880p"
+        "hd2160" -> "2160p (4K)"
+        "hd1440" -> "1440p"
+        "hd1080" -> "1080p"
+        "hd720" -> "720p"
+        "large" -> "480p"
+        "medium" -> "360p"
+        "small" -> "240p"
+        "tiny" -> "144p"
+        else -> null
+    }
+
+    /** Lista de calidades del video actual; no hace falta llegar al engranaje del reproductor. */
+    private fun showQualityDialog() {
+        web.evaluateJavascript("window.__tldQ?window.__tldQ('list'):''") { raw ->
+            var cur = ""
+            val ids = ArrayList<String>()
+            val names = ArrayList<String>()
+            ids.add("auto")
+            names.add("Automática")
+            try {
+                val str = org.json.JSONTokener(raw ?: "").nextValue() as? String ?: ""
+                if (str.isNotEmpty()) {
+                    val o = org.json.JSONObject(str)
+                    cur = o.optString("cur")
+                    val a = o.optJSONArray("levels")
+                    if (a != null) {
+                        for (i in 0 until a.length()) {
+                            val q = a.optString(i)
+                            val n = qualityLabel(q)
+                            if (n != null) {
+                                ids.add(q)
+                                names.add(n)
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+            }
+            if (ids.size < 2) {
+                toast("Abre un video para elegir la calidad")
+                return@evaluateJavascript
+            }
+            val sel = ids.indexOf(cur).let { if (it < 0) 0 else it }
+            MaterialAlertDialogBuilder(dlgCtx())
+                .setTitle("Calidad del video")
+                .setSingleChoiceItems(names.toTypedArray(), sel) { d, i ->
+                    web.evaluateJavascript("window.__tldQ&&window.__tldQ('set','${ids[i]}')", null)
+                    toast("Calidad: ${names[i]}")
+                    d.dismiss()
+                }
+                .setNegativeButton("Cerrar", null)
+                .show()
+        }
     }
 
     private fun enterCursor() {
@@ -517,6 +667,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Zona de la página (sin las barras), en coordenadas del puntero. */
     private fun webBounds(): RectF {
+        if (customView != null) return RectF(0f, 0f, root.width.toFloat(), root.height.toFloat())
         val a = IntArray(2)
         val c = IntArray(2)
         web.getLocationOnScreen(a)
@@ -527,7 +678,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showCursor() {
-        if (!isTv || customView != null || web.width == 0) return
+        if (!isTv || web.width == 0) return
+        if (customView != null) {
+            if (!fsPointer) return
+        } else if (navMode) {
+            return
+        }
         if (cursor.visibility != View.VISIBLE) {
             cursor.visibility = View.VISIBLE
             if (cursor.px == 0f && cursor.py == 0f) {
@@ -559,7 +715,7 @@ class MainActivity : AppCompatActivity() {
         if (dy != 0f) {
             val goingDown = dy > 0f
             val inBand = if (goingDown) y >= b.bottom - band else y <= b.top + band
-            if (inBand) {
+            if (inBand && customView == null) {
                 val atEnd = if (goingDown) y >= b.bottom - m - 1f else y <= b.top + m + 1f
                 val blocked = if (goingDown) edgeBlockedDown else edgeBlockedUp
                 if (atEnd && blocked && repeat == 0) {
@@ -574,7 +730,7 @@ class MainActivity : AppCompatActivity() {
             y = (y + dy).coerceIn(b.top + m, b.bottom - m)
         }
         cursor.moveTo(x, y)
-        sendHover(web, x - b.left, y - b.top)
+        sendHover(customView ?: web, x - b.left, y - b.top)
     }
 
     /** Desplaza la página y apunta si ya no se pudo bajar/subir más (la próxima vez pasa a la barra). */
@@ -600,7 +756,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun clickCursor() {
         val b = webBounds()
-        sendTap(web, cursor.px - b.left, cursor.py - b.top)
+        sendTap(customView ?: web, cursor.px - b.left, cursor.py - b.top)
         cursor.animate().cancel()
         cursor.alpha = 0.55f
         cursor.animate().alpha(1f).setDuration(160).start()
@@ -704,6 +860,7 @@ class MainActivity : AppCompatActivity() {
                     )
                 )
                 full.visibility = View.VISIBLE
+                fsPointer = false
                 cursor.visibility = View.GONE
                 requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                 val c = WindowInsetsControllerCompat(window, window.decorView)
@@ -724,6 +881,8 @@ class MainActivity : AppCompatActivity() {
         customView = null
         customCb?.onCustomViewHidden()
         customCb = null
+        fsPointer = false
+        cursor.visibility = View.GONE
         requestedOrientation =
             if (isTv) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -740,11 +899,12 @@ class MainActivity : AppCompatActivity() {
             docScript?.remove()
             docScript = null
             val sb = StringBuilder()
+            sb.append(JS_QUAL)
             if (lite) sb.append("window.__tldLite=true;")
             if (bgOn) sb.append(JS_VISIBLE)
             if (bgOn || isTv) sb.append(JS_MEDIA)
             if (adsOn) sb.append(JS_ADS)
-            if (isTv) sb.append(JS_TV)
+            if (isTv) sb.append(JS_TV).append(JS_NAV)
             if (!lite) sb.append(eqScript())
             if (sb.isNotEmpty() && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                 docScript = WebViewCompat.addDocumentStartJavaScript(
@@ -759,11 +919,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun inject() {
         val sb = StringBuilder()
-        if (lite) sb.append("window.__tldLite=true;")
+        sb.append(JS_QUAL)
+            if (lite) sb.append("window.__tldLite=true;")
             if (bgOn) sb.append(JS_VISIBLE)
             if (bgOn || isTv) sb.append(JS_MEDIA)
         if (adsOn) sb.append(JS_ADS)
-        if (isTv) sb.append(JS_TV)
+        if (isTv) sb.append(JS_TV).append(JS_NAV)
         if (!lite) sb.append(eqScript())
         if (sb.isNotEmpty()) web.evaluateJavascript(sb.toString(), null)
     }
@@ -1007,6 +1168,8 @@ class MainActivity : AppCompatActivity() {
         tint(btnBg, bgOn)
         tint(btnTimer, timerEnd > 0)
         tint(btnEq, eq.on)
+        tint(btnQuality, false)
+        tintIcon(btnNav, true)
         tintIcon(btnRest, restOn)
         tvBadge.text = if (adsOn) "Sin anuncios" else "Anuncios permitidos"
     }
@@ -1371,7 +1534,7 @@ class MainActivity : AppCompatActivity() {
         /** Agranda un poco el texto para leerlo desde el sofá. */
         const val TV_TEXT_ZOOM = 120
         /** En modo ligero (web móvil) el texto se agranda más. */
-        const val TV_TEXT_ZOOM_LITE = 145
+        const val TV_TEXT_ZOOM_LITE = 120
         const val UA =
             "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/124.0.0.0 Mobile Safari/537.36"
@@ -1395,6 +1558,13 @@ class MainActivity : AppCompatActivity() {
       return (s.overflowY === 'auto' || s.overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 2;
     } catch (e) { return false; }
   }
+  (function addCss() {
+    var t = document.head || document.documentElement;
+    if (!t) { setTimeout(addCss, 50); return; }
+    var st = document.createElement('style');
+    st.textContent = '.ytp-caption-segment,.captions-text,.caption-visual-line{font-size:15px !important;line-height:1.35 !important;}';
+    t.appendChild(st);
+  })();
   window.__tldScroll = function(dy, x, y) {
     try {
       var el = document.elementFromPoint(x, y);
@@ -1410,6 +1580,146 @@ class MainActivity : AppCompatActivity() {
       window.scrollBy(0, dy);
       return window.pageYOffset !== b;
     } catch (e) { return false; }
+  };
+})();
+"""
+
+
+        /** Modo flechas (Smart TV): salta entre los botones, enlaces y videos visibles; OK los toca. */
+        const val JS_NAV = """
+(function(){
+  if (window.__tldNavInit) return; window.__tldNavInit = true;
+  var cur = null;
+  var SEL = 'a[href],button,input,select,textarea,video,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[role=switch],[role=radio],[onclick],[tabindex]:not([tabindex="-1"]),ytm-rich-item-renderer,ytm-video-with-context-renderer,ytm-compact-video-renderer,ytm-chip-cloud-chip-renderer';
+  (function addCss() {
+    var t = document.head || document.documentElement;
+    if (!t) { setTimeout(addCss, 50); return; }
+    var st = document.createElement('style');
+    st.textContent = '.tld-f{outline:4px solid #F5C451 !important;outline-offset:-3px !important;border-radius:8px !important;}';
+    t.appendChild(st);
+  })();
+  function shown(el) {
+    var r = el.getBoundingClientRect();
+    if (r.width < 10 || r.height < 10) return null;
+    if (r.bottom <= 0 || r.top >= innerHeight || r.right <= 0 || r.left >= innerWidth) return null;
+    var n = el, k = 0;
+    while (n && k < 6) {
+      var cs = getComputedStyle(n);
+      if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0' || cs.pointerEvents === 'none') return null;
+      n = n.parentElement; k++;
+    }
+    return r;
+  }
+  function list() {
+    var out = [], ns = document.querySelectorAll(SEL), i, j;
+    for (i = 0; i < ns.length; i++) { var r = shown(ns[i]); if (r) out.push({el: ns[i], r: r}); }
+    var res = [];
+    for (i = 0; i < out.length; i++) {
+      var inner = false;
+      for (j = 0; j < out.length; j++) { if (i !== j && out[i].el.contains(out[j].el)) { inner = true; break; } }
+      if (!inner) res.push(out[i]);
+    }
+    return res;
+  }
+  function ctr(r) { return {x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2}; }
+  function wake() {
+    try {
+      var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+      if (p && cur && p.contains(cur)) {
+        if (p.wakeUpControls) p.wakeUpControls();
+        p.dispatchEvent(new MouseEvent('mousemove', {bubbles: true}));
+      }
+    } catch (e) {}
+  }
+  function setCur(el) {
+    if (cur && cur.classList) cur.classList.remove('tld-f');
+    cur = el;
+    if (cur) {
+      cur.classList.add('tld-f');
+      var r = cur.getBoundingClientRect();
+      if (r.top < 70 || r.bottom > innerHeight - 70) { try { cur.scrollIntoView({block: 'center'}); } catch (e) {} }
+      wake();
+    }
+  }
+  function first(L) {
+    var best = null, bs = 1e9;
+    for (var i = 0; i < L.length; i++) {
+      var c = ctr(L[i].r), s = Math.abs(c.y - innerHeight * 0.35) + Math.abs(c.x - innerWidth / 2) * 0.3;
+      if (s < bs) { bs = s; best = L[i].el; }
+    }
+    return best;
+  }
+  function scroll(d) {
+    var dy = (d === 'd' ? 1 : -1) * Math.round(innerHeight * 0.6);
+    var x = innerWidth / 2, y = innerHeight / 2;
+    if (cur && document.contains(cur)) {
+      var r = cur.getBoundingClientRect();
+      x = Math.min(Math.max((r.left + r.right) / 2, 1), innerWidth - 1);
+      y = Math.min(Math.max((r.top + r.bottom) / 2, 1), innerHeight - 1);
+    }
+    return window.__tldScroll ? window.__tldScroll(dy, x, y) : false;
+  }
+  window.__tldNavMove = function(d) {
+    try {
+      var L = list();
+      if (!L.length) { return scroll(d) ? 's' : 'e'; }
+      var curOk = cur && document.contains(cur) && shown(cur);
+      if (!curOk) { setCur(first(L)); return 'm'; }
+      var c = ctr(cur.getBoundingClientRect()), best = null, bs = 1e9;
+      for (var i = 0; i < L.length; i++) {
+        var e = L[i].el;
+        if (e === cur) continue;
+        var q = ctr(L[i].r), dx = q.x - c.x, dy = q.y - c.y, ok, s;
+        if (d === 'r') { ok = dx > 4; s = Math.abs(dx) + 2.5 * Math.abs(dy); }
+        else if (d === 'l') { ok = dx < -4; s = Math.abs(dx) + 2.5 * Math.abs(dy); }
+        else if (d === 'd') { ok = dy > 4; s = Math.abs(dy) + 2.5 * Math.abs(dx); }
+        else { ok = dy < -4; s = Math.abs(dy) + 2.5 * Math.abs(dx); }
+        if (ok && s < bs) { bs = s; best = e; }
+      }
+      if (best) { setCur(best); return 'm'; }
+      if (d === 'u' || d === 'd') { return scroll(d) ? 's' : 'e'; }
+      return 'x';
+    } catch (e) { return 'n'; }
+  };
+  window.__tldNavPos = function() {
+    try {
+      if (!cur || !document.contains(cur) || !shown(cur)) { setCur(first(list())); return ''; }
+      var c = ctr(cur.getBoundingClientRect());
+      wake();
+      return Math.round(c.x) + ',' + Math.round(c.y);
+    } catch (e) { return ''; }
+  };
+  window.__tldNavClear = function() {
+    try { if (cur) cur.classList.remove('tld-f'); cur = null; } catch (e) {}
+  };
+})();
+"""
+
+        /** Lista y cambia la calidad del video desde la app (sin usar el engranaje del reproductor). */
+        const val JS_QUAL = """
+(function(){
+  if (window.__tldQual) return; window.__tldQual = true;
+  function pl() { return document.getElementById('movie_player') || document.querySelector('.html5-video-player'); }
+  window.__tldQ = function(act, q) {
+    try {
+      var p = pl();
+      if (!p) return '';
+      if (act === 'list') {
+        var lv = p.getAvailableQualityLevels ? p.getAvailableQualityLevels() : [];
+        var cur = p.getPlaybackQuality ? p.getPlaybackQuality() : '';
+        return JSON.stringify({cur: cur, levels: lv});
+      }
+      if (act === 'set') {
+        if (q === 'auto') {
+          if (p.setPlaybackQualityRange) p.setPlaybackQualityRange('tiny', 'highres');
+        } else {
+          if (p.setPlaybackQualityRange) p.setPlaybackQualityRange(q, q);
+          if (p.setPlaybackQuality) p.setPlaybackQuality(q);
+        }
+        return 'ok';
+      }
+    } catch (e) {}
+    return '';
   };
 })();
 """
