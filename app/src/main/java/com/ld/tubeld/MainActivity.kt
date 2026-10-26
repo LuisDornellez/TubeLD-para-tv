@@ -1,0 +1,1740 @@
+package com.ld.tubeld
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.app.ActivityManager
+import android.app.PendingIntent
+import android.app.UiModeManager
+import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.animation.ValueAnimator
+import android.graphics.RectF
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
+import android.graphics.drawable.InsetDrawable
+import android.graphics.drawable.RippleDrawable
+import android.view.Gravity
+import android.view.HapticFeedbackConstants
+import android.view.InputDevice
+import android.view.KeyEvent
+import android.view.MotionEvent
+import androidx.core.graphics.ColorUtils
+import android.os.Build
+import android.net.Uri
+import android.os.Bundle
+import android.provider.Settings
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.text.Spannable
+import android.text.SpannableString
+import android.text.style.ForegroundColorSpan
+import android.view.ContextThemeWrapper
+import android.view.LayoutInflater
+import android.view.View
+import android.widget.Button
+import android.view.ViewGroup
+import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.ImageView
+import android.widget.ProgressBar
+import android.widget.TextView
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.widget.ImageViewCompat
+import androidx.webkit.ScriptHandler
+import com.google.android.material.bottomsheet.BottomSheetBehavior
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.chip.Chip
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.chip.ChipGroup
+import com.google.android.material.materialswitch.MaterialSwitch
+import com.google.android.material.slider.Slider
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
+import java.io.ByteArrayInputStream
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var web: BgWebView
+    private lateinit var bar: ProgressBar
+    private lateinit var full: FrameLayout
+    private lateinit var btnAds: ImageButton
+    private lateinit var btnBg: ImageButton
+    private lateinit var tvBadge: TextView
+    private lateinit var tvLogo: TextView
+    private lateinit var btnTheme: ImageButton
+    private lateinit var root: FrameLayout
+    private lateinit var splash: View
+    private lateinit var btnExit: ImageButton
+    private var splashStart = 0L
+    private var splashDone = false
+    private var splashQueued = false
+    private val hideSplash = Runnable {
+        if (splashDone) return@Runnable
+        splashDone = true
+        syncBars()
+        splash.animate().alpha(0f).setDuration(320).withEndAction { splash.visibility = View.GONE }.start()
+        if (isTv) {
+            web.requestFocus()
+            showCursor()
+        }
+    }
+    private var shownPal: Pal.P? = null
+    private var themeAnim: ValueAnimator? = null
+    private var pill: TextView? = null
+    private val hidePill = Runnable {
+        pill?.animate()?.alpha(0f)?.setDuration(240)?.withEndAction { pill?.visibility = View.GONE }?.start()
+    }
+    private lateinit var bottomBar: View
+    private lateinit var divider: View
+    private lateinit var topBar: View
+    private lateinit var cursor: CursorView
+
+    // ---- Smart TV (control remoto) ----
+    private var isTv = false
+    /** Modo ligero: TV con poca memoria (1 GB). Web móvil, sin ecualizador, visualizador, notificación ni segundo plano. */
+    private var lite = false
+    private var edgeBlockedUp = false
+    private var edgeBlockedDown = false
+    private val fadeCursor = Runnable {
+        cursor.animate().alpha(0f).setDuration(300).start()
+    }
+
+    private var docScript: ScriptHandler? = null
+    private var customView: View? = null
+    private var customCb: WebChromeClient.CustomViewCallback? = null
+
+    @Volatile private var adsOn = true
+    private var bgOn = true
+
+    private lateinit var btnTimer: ImageButton
+    private lateinit var btnEq: ImageButton
+    private var eq = Eq.Cfg()
+    private val handler = Handler(Looper.getMainLooper())
+    private var timerEnd = 0L
+    private val timerTask = Runnable {
+        timerEnd = 0
+        paint()
+        runCmd(Media.PAUSE, 0)
+        toast("Temporizador: reproducción pausada")
+    }
+
+    private val prefs by lazy { getSharedPreferences("tubeld", MODE_PRIVATE) }
+
+    private val notifPerm =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            syncService()
+            handler.postDelayed({ maybeAskBattery() }, 800)
+        }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        setTheme(R.style.Theme_TubeLD) // quita el tema de arranque (la pantalla inicial del sistema)
+        super.onCreate(savedInstanceState)
+        isTv = detectTv()
+        lite = detectLite()
+        if (isTv) requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        setContentView(R.layout.activity_main)
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+
+        web = findViewById(R.id.web)
+        bar = findViewById(R.id.bar)
+        full = findViewById(R.id.full)
+        btnAds = findViewById(R.id.btnAds)
+        btnBg = findViewById(R.id.btnBg)
+        btnTimer = findViewById(R.id.btnTimer)
+        btnEq = findViewById(R.id.btnEq)
+        eq = Eq.load(prefs)
+        tvBadge = findViewById(R.id.tvBadge)
+        tvLogo = findViewById(R.id.tvLogo)
+        btnTheme = findViewById(R.id.btnTheme)
+        root = findViewById(R.id.root)
+        splash = findViewById(R.id.splash)
+        btnExit = findViewById(R.id.btnExit)
+        bottomBar = findViewById(R.id.bottomBar)
+        divider = findViewById(R.id.divider)
+        topBar = findViewById(R.id.topBar)
+        cursor = findViewById(R.id.cursor)
+
+        // Modo día / noche (por defecto, noche como siempre)
+        Pal.cur = if (prefs.getBoolean("night", true)) Pal.NIGHT else Pal.DAY
+        setPageTheme(Pal.cur.night)
+
+        adsOn = prefs.getBoolean("ads", true)
+        bgOn = !lite && prefs.getBoolean("bg", true)
+        web.keepAlive = bgOn
+
+        Media.reset()
+        Media.onCommand = { cmd, arg -> runOnUiThread { runCmd(cmd, arg) } }
+        Media.onDebug = { m -> runOnUiThread { android.widget.Toast.makeText(applicationContext, m, android.widget.Toast.LENGTH_LONG).show() } }
+
+        setupWeb()
+        installScripts()
+
+        findViewById<ImageButton>(R.id.btnBack).setOnClickListener {
+            if (web.canGoBack()) web.goBack()
+        }
+        findViewById<ImageButton>(R.id.btnHome).setOnClickListener {
+            web.loadUrl(homeUrl())
+        }
+        findViewById<ImageButton>(R.id.btnReload).setOnClickListener {
+            web.reload()
+        }
+        btnAds.setOnClickListener {
+            adsOn = !adsOn
+            prefs.edit().putBoolean("ads", adsOn).apply()
+            paint()
+            installScripts()
+            toast(if (adsOn) "Bloqueo de anuncios activado" else "Bloqueo de anuncios desactivado")
+            web.reload()
+        }
+        btnBg.setOnClickListener {
+            bgOn = !bgOn
+            prefs.edit().putBoolean("bg", bgOn).apply()
+            web.keepAlive = bgOn
+            paint()
+            installScripts()
+            syncService()
+            toast(if (bgOn) "Segundo plano activado" else "Segundo plano desactivado")
+            web.reload()
+        }
+        btnTimer.setOnClickListener { showTimerDialog() }
+        btnEq.setOnClickListener { showEqDialog() }
+        btnTheme.setOnClickListener {
+            val night = !Pal.cur.night
+            Pal.cur = if (night) Pal.NIGHT else Pal.DAY
+            prefs.edit().putBoolean("night", night).apply()
+            applyTheme(true)
+            setPageTheme(night)
+            toast(if (night) "Modo noche" else "Modo día")
+            web.reload()
+        }
+        if (isTv) setupTv()
+        if (lite) {
+            // Menos funciones = menos memoria. El nombre tubeLD y el bloqueo de anuncios se quedan.
+            findViewById<View>(R.id.viz).visibility = View.GONE
+            btnEq.visibility = View.GONE
+            btnBg.visibility = View.GONE
+        }
+        applyTheme()
+        val bb = bottomBar as ViewGroup
+        for (i in 0 until bb.childCount) pressFx(bb.getChildAt(i))
+        pressFx(btnTheme)
+        pressFx(btnExit)
+        btnExit.setOnClickListener { showExitDialog() }
+        if (savedInstanceState == null) {
+            showSplash()
+        } else {
+            splashDone = true
+            splash.visibility = View.GONE
+        }
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                when {
+                    customView != null -> hideFull()
+                    web.canGoBack() -> web.goBack()
+                    else -> {
+                        isEnabled = false
+                        onBackPressedDispatcher.onBackPressed()
+                    }
+                }
+            }
+        })
+
+        if (savedInstanceState == null) {
+            val target = intent?.data?.toString()
+            web.loadUrl(if (target != null && target.startsWith("https://")) target else homeUrl())
+        } else {
+            web.restoreState(savedInstanceState)
+        }
+
+        if (Build.VERSION.SDK_INT >= 33 && !lite &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            syncService()
+            if (savedInstanceState == null) handler.postDelayed({ maybeAskBattery() }, 3500)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val target = intent.data?.toString()
+        if (target != null && target.startsWith("https://")) web.loadUrl(target)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        web.saveState(outState)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        web.onResume()
+    }
+
+    override fun onPause() {
+        if (!bgOn) web.onPause()
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        Media.onCommand = null
+        Media.onDebug = null
+        Media.reset()
+        stopService(Intent(this, KeepAliveService::class.java))
+        full.removeAllViews()
+        web.destroy()
+        super.onDestroy()
+    }
+
+    // ---------- Smart TV: control remoto ----------
+
+    /** Smart TV / Android TV / Google TV / caja sin pantalla táctil. */
+    private fun detectTv(): Boolean {
+        val um = getSystemService(UI_MODE_SERVICE) as? UiModeManager
+        if (um != null && um.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION) return true
+        val pm = packageManager
+        return pm.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+            !pm.hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)
+    }
+
+    private fun homeUrl(): String = if (isTv && !lite) HOME_TV else HOME
+
+    /** TV con 1 GB de RAM (o marcada por el sistema como de poca memoria). */
+    private fun detectLite(): Boolean {
+        if (!isTv) return false
+        return try {
+            val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+            val mi = ActivityManager.MemoryInfo()
+            am.getMemoryInfo(mi)
+            am.isLowRamDevice || mi.totalMem <= 1_600_000_000L
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun tvFocusables(): List<View> {
+        val l = ArrayList<View>()
+        val bb = bottomBar as ViewGroup
+        for (i in 0 until bb.childCount) l.add(bb.getChildAt(i))
+        l.add(btnTheme)
+        l.add(btnExit)
+        return l
+    }
+
+    /** Botones más grandes (se ven desde el sofá) y que se pueden seleccionar con las flechas. */
+    private fun setupTv() {
+        fun size(v: View, w: Int, h: Int) {
+            val lp = v.layoutParams
+            if (w > 0) lp.width = w
+            lp.height = h
+            v.layoutParams = lp
+        }
+        size(topBar, 0, dp(72))
+        topBar.setPadding(dp(36), 0, dp(28), 0)
+        tvLogo.textSize = 28f
+        for (b in listOf(btnTheme, btnExit)) {
+            size(b, dp(52), dp(52))
+            b.setPadding(dp(12), dp(12), dp(12), dp(12))
+        }
+        size(bottomBar, 0, dp(80))
+        bottomBar.setPadding(dp(56), dp(2), dp(56), dp(8))
+        val bb = bottomBar as ViewGroup
+        for (i in 0 until bb.childCount) {
+            val b = bb.getChildAt(i) as ImageButton
+            b.scaleType = ImageView.ScaleType.FIT_CENTER
+            b.setPadding(dp(8), dp(22), dp(8), dp(22))
+        }
+        for (v in tvFocusables()) {
+            v.isFocusable = true
+            v.setOnFocusChangeListener { x, f ->
+                val k = if (f) 1.12f else 1f
+                x.animate().scaleX(k).scaleY(k).setDuration(120).start()
+            }
+        }
+        web.requestFocus()
+    }
+
+    /** Marco dorado alrededor del botón que tiene el foco. */
+    private fun applyFocusRings() {
+        val p = Pal.cur
+        for (v in tvFocusables()) {
+            val top = v === btnTheme || v === btnExit
+            val ring = GradientDrawable().apply {
+                cornerRadius = dp(16).toFloat()
+                setColor(withA(p.gold, 0x26))
+                setStroke(dp(3), p.gold)
+            }
+            val none = GradientDrawable().apply { setColor(Color.TRANSPARENT) }
+            val sl = StateListDrawable()
+            sl.addState(
+                intArrayOf(android.R.attr.state_focused),
+                if (top) InsetDrawable(ring, dp(2), dp(2), dp(2), dp(2))
+                else InsetDrawable(ring, dp(4), dp(8), dp(4), dp(8))
+            )
+            sl.addState(intArrayOf(), none)
+            v.foreground = sl
+        }
+    }
+
+    override fun dispatchKeyEvent(e: KeyEvent): Boolean {
+        if (handleMediaKey(e)) return true
+        if (isTv && splashDone && handleTvKey(e)) return true
+        return super.dispatchKeyEvent(e)
+    }
+
+    /** Botones de reproducción del control remoto (play, pausa, siguiente, adelantar, retroceder). */
+    private fun handleMediaKey(e: KeyEvent): Boolean {
+        val cmd: String
+        var arg = 0L
+        when (e.keyCode) {
+            KeyEvent.KEYCODE_MEDIA_PLAY -> cmd = Media.PLAY
+            KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP -> cmd = Media.PAUSE
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> cmd = "toggle"
+            KeyEvent.KEYCODE_MEDIA_NEXT -> cmd = Media.NEXT
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> cmd = Media.PREV
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { cmd = "seekrel"; arg = 10_000L }
+            KeyEvent.KEYCODE_MEDIA_REWIND -> { cmd = "seekrel"; arg = -10_000L }
+            else -> return false
+        }
+        if (e.action == KeyEvent.ACTION_DOWN && (e.repeatCount == 0 || arg != 0L)) runCmd(cmd, arg)
+        return true
+    }
+
+    private fun isDescendantOf(v: View?, anc: View): Boolean {
+        var x: View? = v
+        while (x != null) {
+            if (x === anc) return true
+            x = x.parent as? View
+        }
+        return false
+    }
+
+    private fun focusInBars(): Boolean {
+        val f = currentFocus ?: return false
+        return isDescendantOf(f, topBar) || isDescendantOf(f, bottomBar)
+    }
+
+    /**
+     * Flechas y OK del control remoto:
+     * - Página: mueven un puntero; OK hace clic; en el borde de arriba/abajo desplazan la página
+     *   y, si ya no hay más, pasan a los botones de la barra.
+     * - Barras: se mueve el foco entre botones; OK los activa; subir/bajar vuelve al puntero.
+     * - Video a pantalla completa: izquierda/derecha saltan 10 s y OK pausa o reproduce.
+     */
+    private fun handleTvKey(e: KeyEvent): Boolean {
+        val k = e.keyCode
+        val isOk = k == KeyEvent.KEYCODE_DPAD_CENTER || k == KeyEvent.KEYCODE_ENTER ||
+            k == KeyEvent.KEYCODE_NUMPAD_ENTER
+        val isDir = k == KeyEvent.KEYCODE_DPAD_UP || k == KeyEvent.KEYCODE_DPAD_DOWN ||
+            k == KeyEvent.KEYCODE_DPAD_LEFT || k == KeyEvent.KEYCODE_DPAD_RIGHT
+        if (!isOk && !isDir) return false
+        val down = e.action == KeyEvent.ACTION_DOWN
+
+        val cv = customView
+        if (cv != null) {
+            if (down) {
+                when (k) {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> if (e.repeatCount % 4 == 0) runCmd("seekrel", -10_000L)
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> if (e.repeatCount % 4 == 0) runCmd("seekrel", 10_000L)
+                    KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> Unit
+                    else -> if (e.repeatCount == 0) runCmd("toggle", 0L)
+                }
+                sendHover(cv, cv.width / 2f, cv.height / 2f) // hace aparecer los controles del reproductor
+            }
+            return true
+        }
+
+        if (focusInBars()) {
+            if (!down) return false
+            val inBottom = isDescendantOf(currentFocus, bottomBar)
+            return when (k) {
+                KeyEvent.KEYCODE_DPAD_UP -> { if (inBottom) enterCursor(); true }
+                KeyEvent.KEYCODE_DPAD_DOWN -> { if (!inBottom) enterCursor(); true }
+                else -> false
+            }
+        }
+
+        if (!down) return true
+        showCursor()
+        if (isOk) {
+            if (e.repeatCount == 0) clickCursor()
+            return true
+        }
+        moveCursor(k, e.repeatCount)
+        return true
+    }
+
+    private fun enterCursor() {
+        web.requestFocus()
+        showCursor()
+    }
+
+    private fun goToBar(bottom: Boolean) {
+        edgeBlockedUp = false
+        edgeBlockedDown = false
+        handler.removeCallbacks(fadeCursor)
+        cursor.visibility = View.GONE
+        val target: View = if (bottom) findViewById(R.id.btnHome) else btnTheme
+        target.requestFocus()
+    }
+
+    /** Zona de la página (sin las barras), en coordenadas del puntero. */
+    private fun webBounds(): RectF {
+        val a = IntArray(2)
+        val c = IntArray(2)
+        web.getLocationOnScreen(a)
+        root.getLocationOnScreen(c)
+        val l = (a[0] - c[0]).toFloat()
+        val t = (a[1] - c[1]).toFloat()
+        return RectF(l, t, l + web.width, t + web.height)
+    }
+
+    private fun showCursor() {
+        if (!isTv || customView != null || web.width == 0) return
+        if (cursor.visibility != View.VISIBLE) {
+            cursor.visibility = View.VISIBLE
+            if (cursor.px == 0f && cursor.py == 0f) {
+                val b = webBounds()
+                cursor.moveTo(b.centerX(), b.centerY())
+            }
+        }
+        cursor.animate().cancel()
+        cursor.alpha = 1f
+        handler.removeCallbacks(fadeCursor)
+        handler.postDelayed(fadeCursor, 5000)
+    }
+
+    private fun moveCursor(key: Int, repeat: Int) {
+        val b = webBounds()
+        val m = dp(6).toFloat()
+        val band = dp(72).toFloat()
+        val step = dp(14).toFloat() + minOf(repeat, 24) * dp(2).toFloat()
+        var dx = 0f
+        var dy = 0f
+        when (key) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> dx = -step
+            KeyEvent.KEYCODE_DPAD_RIGHT -> dx = step
+            KeyEvent.KEYCODE_DPAD_UP -> dy = -step
+            else -> dy = step
+        }
+        val x = (cursor.px + dx).coerceIn(b.left + m, b.right - m)
+        var y = cursor.py
+        if (dy != 0f) {
+            val goingDown = dy > 0f
+            val inBand = if (goingDown) y >= b.bottom - band else y <= b.top + band
+            if (inBand) {
+                val atEnd = if (goingDown) y >= b.bottom - m - 1f else y <= b.top + m + 1f
+                val blocked = if (goingDown) edgeBlockedDown else edgeBlockedUp
+                if (atEnd && blocked && repeat == 0) {
+                    goToBar(goingDown)
+                    return
+                }
+                scrollPage(goingDown, Math.abs(dy), x, y, b)
+            } else {
+                edgeBlockedUp = false
+                edgeBlockedDown = false
+            }
+            y = (y + dy).coerceIn(b.top + m, b.bottom - m)
+        }
+        cursor.moveTo(x, y)
+        sendHover(web, x - b.left, y - b.top)
+    }
+
+    /** Desplaza la página y apunta si ya no se pudo bajar/subir más (la próxima vez pasa a la barra). */
+    private fun scrollPage(goingDown: Boolean, px: Float, x: Float, y: Float, b: RectF) {
+        val d = resources.displayMetrics.density
+        val mag = (px / d * 2.2f).toInt()
+        val css = if (goingDown) mag else -mag
+        val cx = ((x - b.left) / d).toInt()
+        val cy = ((y - b.top) / d).toInt()
+        web.evaluateJavascript(
+            "window.__tldScroll?window.__tldScroll($css,$cx,$cy):false"
+        ) { r ->
+            val moved = r == "true"
+            if (goingDown) {
+                edgeBlockedDown = !moved
+                if (moved) edgeBlockedUp = false
+            } else {
+                edgeBlockedUp = !moved
+                if (moved) edgeBlockedDown = false
+            }
+        }
+    }
+
+    private fun clickCursor() {
+        val b = webBounds()
+        sendTap(web, cursor.px - b.left, cursor.py - b.top)
+        cursor.animate().cancel()
+        cursor.alpha = 0.55f
+        cursor.animate().alpha(1f).setDuration(160).start()
+    }
+
+    private fun sendTap(target: View, x: Float, y: Float) {
+        val t = SystemClock.uptimeMillis()
+        val dn = MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, x, y, 0)
+        dn.source = InputDevice.SOURCE_TOUCHSCREEN
+        target.dispatchTouchEvent(dn)
+        dn.recycle()
+        handler.postDelayed({
+            val t2 = SystemClock.uptimeMillis()
+            val up = MotionEvent.obtain(t, t2, MotionEvent.ACTION_UP, x, y, 0)
+            up.source = InputDevice.SOURCE_TOUCHSCREEN
+            target.dispatchTouchEvent(up)
+            up.recycle()
+        }, 60)
+    }
+
+    /** Mueve el "ratón" sobre la página (hace falta para que aparezcan los controles del reproductor). */
+    private fun sendHover(target: View, x: Float, y: Float) {
+        val t = SystemClock.uptimeMillis()
+        val ev = MotionEvent.obtain(t, t, MotionEvent.ACTION_HOVER_MOVE, x, y, 0)
+        ev.source = InputDevice.SOURCE_MOUSE
+        target.dispatchGenericMotionEvent(ev)
+        ev.recycle()
+    }
+
+    // ---------- web ----------
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun setupWeb() {
+        web.setBackgroundColor(Pal.cur.bg)
+        val s = web.settings
+        s.javaScriptEnabled = true
+        s.domStorageEnabled = true
+        s.mediaPlaybackRequiresUserGesture = false
+        s.userAgentString = if (isTv && !lite) UA_TV else UA
+        if (isTv) s.textZoom = if (lite) TV_TEXT_ZOOM_LITE else TV_TEXT_ZOOM
+        // El proceso de la página mantiene prioridad alta aunque la app esté en segundo plano.
+        if (!lite) web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
+        web.addJavascriptInterface(WebBridge(), "TLD")
+        CookieManager.getInstance().setAcceptCookie(true)
+        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true)
+
+        web.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val u = request.url
+                val scheme = u.scheme ?: ""
+                if (scheme != "http" && scheme != "https") return true
+                val h = u.host ?: ""
+                if (isInternal(h)) return false
+                try {
+                    startActivity(Intent(Intent.ACTION_VIEW, u))
+                } catch (_: Exception) {
+                }
+                return true
+            }
+
+            override fun shouldInterceptRequest(
+                view: WebView,
+                request: WebResourceRequest
+            ): WebResourceResponse? {
+                if (adsOn && isAdRequest(request)) {
+                    return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+                }
+                return null
+            }
+
+            override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                inject()
+            }
+
+            override fun onPageFinished(view: WebView, url: String?) {
+                super.onPageFinished(view, url)
+                inject()
+            }
+        }
+
+        web.webChromeClient = object : WebChromeClient() {
+            override fun onProgressChanged(view: WebView, newProgress: Int) {
+                bar.progress = newProgress
+                if (newProgress >= 70) hideSplashSoon()
+                bar.visibility = if (newProgress < 100) View.VISIBLE else View.INVISIBLE
+            }
+
+            override fun onShowCustomView(view: View, callback: CustomViewCallback) {
+                if (customView != null) {
+                    callback.onCustomViewHidden()
+                    return
+                }
+                customView = view
+                customCb = callback
+                full.addView(
+                    view,
+                    FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                )
+                full.visibility = View.VISIBLE
+                cursor.visibility = View.GONE
+                requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                val c = WindowInsetsControllerCompat(window, window.decorView)
+                c.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                c.hide(WindowInsetsCompat.Type.systemBars())
+            }
+
+            override fun onHideCustomView() {
+                hideFull()
+            }
+        }
+    }
+
+    private fun hideFull() {
+        val v = customView ?: return
+        full.removeView(v)
+        full.visibility = View.GONE
+        customView = null
+        customCb?.onCustomViewHidden()
+        customCb = null
+        requestedOrientation =
+            if (isTv) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            else ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        WindowInsetsControllerCompat(window, window.decorView).show(WindowInsetsCompat.Type.systemBars())
+        if (isTv) {
+            web.requestFocus()
+            showCursor()
+        }
+    }
+
+    /** Registra el script para que corra ANTES que los de YouTube. */
+    private fun installScripts() {
+        try {
+            docScript?.remove()
+            docScript = null
+            val sb = StringBuilder()
+            if (lite) sb.append("window.__tldLite=true;")
+            if (bgOn) sb.append(JS_VISIBLE)
+            if (bgOn || isTv) sb.append(JS_MEDIA)
+            if (adsOn) sb.append(JS_ADS)
+            if (isTv) sb.append(JS_TV)
+            if (!lite) sb.append(eqScript())
+            if (sb.isNotEmpty() && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                docScript = WebViewCompat.addDocumentStartJavaScript(
+                    web,
+                    sb.toString(),
+                    setOf("https://m.youtube.com", "https://www.youtube.com")
+                )
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun inject() {
+        val sb = StringBuilder()
+        if (lite) sb.append("window.__tldLite=true;")
+            if (bgOn) sb.append(JS_VISIBLE)
+            if (bgOn || isTv) sb.append(JS_MEDIA)
+        if (adsOn) sb.append(JS_ADS)
+        if (isTv) sb.append(JS_TV)
+        if (!lite) sb.append(eqScript())
+        if (sb.isNotEmpty()) web.evaluateJavascript(sb.toString(), null)
+    }
+
+    private fun isInternal(h: String): Boolean =
+        h == "youtube.com" || h.endsWith(".youtube.com") ||
+            h == "youtu.be" ||
+            h == "google.com" || h.endsWith(".google.com")
+
+    private fun isAdRequest(r: WebResourceRequest): Boolean {
+        val u = r.url
+        val h = u.host ?: return false
+        for (d in AD_HOSTS) {
+            if (h == d || h.endsWith(".$d")) return true
+        }
+        val p = u.path ?: ""
+        return p.contains("/pagead/") || p.contains("/api/stats/ads") || p.contains("/get_midroll_")
+    }
+
+    // ---------- modo día / noche ----------
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun withA(c: Int, a: Int): Int = (c and 0x00FFFFFF) or (a shl 24)
+
+    /** Pinta toda la app (fondos, barras, logo, botones) con los colores del modo actual. */
+    private fun applyTheme(animate: Boolean = false) {
+        val to = Pal.cur
+        val from = shownPal
+        themeAnim?.cancel()
+        themeAnim = null
+
+        divider.background = GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            intArrayOf(to.gold, to.gold and 0x00FFFFFF)
+        )
+        bar.progressTintList = ColorStateList.valueOf(to.gold)
+        tvBadge.setTextColor(to.gold)
+        tvBadge.background = GradientDrawable().apply {
+            cornerRadius = dp(14).toFloat()
+            setColor(withA(to.gold, 0x14))
+            setStroke(dp(1), withA(to.gold, 0x4D))
+        }
+
+        val logo = SpannableString("tubeLD")
+        logo.setSpan(ForegroundColorSpan(to.text), 0, 4, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        logo.setSpan(ForegroundColorSpan(to.gold), 4, 6, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        tvLogo.text = logo
+
+        val c = WindowInsetsControllerCompat(window, window.decorView)
+        c.isAppearanceLightStatusBars = !to.night
+        c.isAppearanceLightNavigationBars = !to.night
+
+        cursor.setColor(to.gold)
+        if (isTv) applyFocusRings()
+
+        // En modo noche se muestra el sol (para pasar a día) y en modo día, la luna.
+        btnTheme.setImageResource(if (to.night) R.drawable.ic_sun else R.drawable.ic_moon)
+        tintIcon(btnTheme, true)
+        tintIcon(btnExit, false)
+        paint()
+
+        if (animate && !lite && from != null && from !== to) {
+            val anim = ValueAnimator.ofFloat(0f, 1f)
+            anim.duration = 260
+            anim.addUpdateListener { va ->
+                val f = va.animatedFraction
+                paintSurfaces(
+                    ColorUtils.blendARGB(from.bg, to.bg, f),
+                    ColorUtils.blendARGB(from.bar, to.bar, f),
+                    to
+                )
+            }
+            themeAnim = anim
+            anim.start()
+        } else {
+            paintSurfaces(to.bg, to.bar, to)
+        }
+        shownPal = to
+    }
+
+    /** Una sola vez: ofrece quitar el límite de batería para que el audio no se corte en segundo plano. */
+    private fun maybeAskBattery() {
+        if (isTv || isFinishing || isDestroyed || Build.VERSION.SDK_INT < 23) return
+        if (prefs.getBoolean("battery_asked", false)) return
+        val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+        if (pm.isIgnoringBatteryOptimizations(packageName)) return
+        prefs.edit().putBoolean("battery_asked", true).apply()
+        MaterialAlertDialogBuilder(dlgCtx())
+            .setTitle("Sin límite de batería")
+            .setMessage(
+                "Para que el audio no se corte con la pantalla apagada, permite que tubeLD " +
+                    "funcione sin restricciones de batería."
+            )
+            .setPositiveButton("Permitir") { _, _ -> openBatterySettings() }
+            .setNegativeButton("Ahora no", null)
+            .show()
+    }
+
+    @SuppressLint("BatteryLife")
+    private fun openBatterySettings() {
+        try {
+            startActivity(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+            )
+        } catch (_: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (_: Exception) {
+                toast("Abre Ajustes > Apps > tubeLD > Ahorro de batería > Sin restricciones")
+            }
+        }
+    }
+
+    /** Pantalla inicial: siempre oscura y dorada; solo texto, un icono y 3 fundidos (muy liviana). */
+    private fun showSplash() {
+        val logo = findViewById<TextView>(R.id.splashLogo)
+        val s = SpannableString("tubeLD")
+        s.setSpan(ForegroundColorSpan(Color.WHITE), 0, 4, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        s.setSpan(ForegroundColorSpan(Pal.NIGHT.gold), 4, 6, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        logo.text = s
+
+        // Barras del sistema oscuras mientras se ve la pantalla inicial
+        window.statusBarColor = Pal.NIGHT.bg
+        window.navigationBarColor = Pal.NIGHT.bg
+        val c = WindowInsetsControllerCompat(window, window.decorView)
+        c.isAppearanceLightStatusBars = false
+        c.isAppearanceLightNavigationBars = false
+
+        splashStart = SystemClock.uptimeMillis()
+        val mark = findViewById<View>(R.id.splashMark)
+        mark.alpha = 0f
+        mark.scaleX = 0.88f
+        mark.scaleY = 0.88f
+        mark.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(500).start()
+        logo.alpha = 0f
+        logo.animate().alpha(1f).setStartDelay(180).setDuration(450).start()
+        val tag = findViewById<View>(R.id.splashTag)
+        tag.alpha = 0f
+        tag.animate().alpha(1f).setStartDelay(420).setDuration(450).start()
+        handler.postDelayed(hideSplash, 3500) // por si la página tarda: nunca se queda pegada
+    }
+
+    /** Cuando YouTube ya cargó, la pantalla inicial se va (después de verse al menos 1,1 s). */
+    private fun hideSplashSoon() {
+        if (splashDone || splashQueued) return
+        splashQueued = true
+        val wait = (1100L - (SystemClock.uptimeMillis() - splashStart)).coerceAtLeast(0L)
+        handler.postDelayed(hideSplash, wait)
+    }
+
+    private fun syncBars() {
+        val p = Pal.cur
+        window.statusBarColor = p.bg
+        window.navigationBarColor = p.bar
+        val c = WindowInsetsControllerCompat(window, window.decorView)
+        c.isAppearanceLightStatusBars = !p.night
+        c.isAppearanceLightNavigationBars = !p.night
+    }
+
+    private fun showExitDialog() {
+        MaterialAlertDialogBuilder(dlgCtx())
+            .setTitle("¿Salir de tubeLD?")
+            .setMessage("Se cerrará la app y se detendrá lo que esté sonando.")
+            .setPositiveButton("Salir") { _, _ -> runCmd(Media.CLOSE, 0) }
+            .setNegativeButton("Seguir viendo", null)
+            .show()
+    }
+
+    /** Fondos que cambian con suavidad al pasar de día a noche. */
+    private fun paintSurfaces(bg: Int, barColor: Int, p: Pal.P) {
+        root.setBackgroundColor(bg)
+        web.setBackgroundColor(bg)
+        val r = dp(24).toFloat()
+        bottomBar.background = GradientDrawable().apply {
+            setColor(barColor)
+            cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+            setStroke(dp(1), withA(p.gold, 0x2E))
+        }
+        window.statusBarColor = bg
+        window.navigationBarColor = barColor
+    }
+
+    /** Al tocar un botón: se achica un poco y vibra suave. */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun pressFx(v: View) {
+        v.setOnTouchListener { x, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    x.animate().scaleX(0.9f).scaleY(0.9f).setDuration(90).start()
+                    x.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    x.animate().scaleX(1f).scaleY(1f).setDuration(140).start()
+            }
+            false
+        }
+    }
+
+    /**
+     * Le dice a YouTube qué tema usar (cookie PREF, campo f6: 0x400 = oscuro, 0x80000 = claro).
+     * Hay que recargar la página para que se note.
+     */
+    private fun setPageTheme(dark: Boolean) {
+        try {
+            val cm = CookieManager.getInstance()
+            val raw = cm.getCookie("https://m.youtube.com") ?: ""
+            var pref = ""
+            for (part in raw.split(";")) {
+                val t = part.trim()
+                if (t.startsWith("PREF=")) pref = t.substring(5)
+            }
+            val map = LinkedHashMap<String, String>()
+            for (kv in pref.split("&")) {
+                val i = kv.indexOf('=')
+                if (i > 0) map[kv.substring(0, i)] = kv.substring(i + 1)
+            }
+            var f6 = map["f6"]?.toLongOrNull(16) ?: 0L
+            f6 = if (dark) (f6 or 0x400L) and 0x80000L.inv() else (f6 or 0x80000L) and 0x400L.inv()
+            map["f6"] = java.lang.Long.toHexString(f6)
+            val v = map.entries.joinToString("&") { it.key + "=" + it.value }
+            cm.setCookie(
+                "https://m.youtube.com",
+                "PREF=$v; Domain=.youtube.com; Path=/; Max-Age=31536000; Secure"
+            )
+            cm.flush()
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Contexto con el tema (claro u oscuro) para los diálogos. */
+    private fun dlgCtx() = ContextThemeWrapper(
+        this,
+        if (Pal.cur.night) R.style.Theme_TubeLD else R.style.Theme_TubeLDDay
+    )
+
+    // ---------- botones y servicio ----------
+
+    private fun paint() {
+        tint(btnAds, adsOn)
+        tint(btnBg, bgOn)
+        tint(btnTimer, timerEnd > 0)
+        tint(btnEq, eq.on)
+        tvBadge.text = if (adsOn) "Sin anuncios" else "Anuncios permitidos"
+    }
+
+    private fun tintIcon(b: ImageButton, on: Boolean) {
+        ImageViewCompat.setImageTintList(
+            b,
+            ColorStateList.valueOf(if (on) Pal.cur.gold else Pal.cur.muted)
+        )
+    }
+
+    /** Icono dorado y un resalte suave detrás cuando la función está activa. */
+    private fun tint(b: ImageButton, on: Boolean) {
+        tintIcon(b, on)
+        val p = Pal.cur
+        val shape = { col: Int ->
+            InsetDrawable(
+                GradientDrawable().apply {
+                    cornerRadius = dp(16).toFloat()
+                    setColor(col)
+                },
+                dp(5), dp(10), dp(5), dp(10)
+            )
+        }
+        val ripple = ColorStateList.valueOf(withA(p.gold, 0x33))
+        b.background = if (on) RippleDrawable(ripple, shape(withA(p.gold, 0x24)), null)
+        else RippleDrawable(ripple, null, shape(Color.BLACK))
+    }
+
+    // ---------- ecualizador ----------
+
+    private fun eqScript(): String = "window.__tldEqCfg=" + Eq.toJs(eq) + ";" + JS_EQ
+
+    /** Guarda y manda los ajustes a la página (ella los aplica en menos de medio segundo). */
+    private fun pushEq() {
+        Eq.save(prefs, eq)
+        web.evaluateJavascript("window.__tldEqCfg=" + Eq.toJs(eq) + ";", null)
+        paint()
+    }
+
+    @SuppressLint("InflateParams")
+    private fun showEqDialog() {
+        val ctx = dlgCtx()
+        val dlg = BottomSheetDialog(ctx)
+        val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_eq, null)
+        val swEq = v.findViewById<MaterialSwitch>(R.id.swEq)
+        val bands = v.findViewById<EqBandsView>(R.id.eqBands)
+        val chips = v.findViewById<ChipGroup>(R.id.eqPresets)
+        val slBass = v.findViewById<Slider>(R.id.slBass)
+        val slWide = v.findViewById<Slider>(R.id.slWide)
+        val slClar = v.findViewById<Slider>(R.id.slClarity)
+        val swLevel = v.findViewById<MaterialSwitch>(R.id.swLevel)
+        val slBuf = v.findViewById<Slider>(R.id.slBuf)
+        slBuf.setLabelFormatter { when (it.toInt()) { 0 -> "Mínimo retraso"; 1 -> "Equilibrado"; else -> "Máx. estabilidad" } }
+        var busy = false
+
+        val chipIds = HashMap<String, Int>()
+        for (p in Eq.PRESETS) {
+            val c = Chip(ctx)
+            c.id = View.generateViewId()
+            c.text = p.name
+            c.isCheckable = true
+            val pl = Pal.cur
+            val chk = intArrayOf(android.R.attr.state_checked)
+            c.chipBackgroundColor = ColorStateList(
+                arrayOf(chk, intArrayOf()), intArrayOf(withA(pl.gold, 0x2E), Color.TRANSPARENT)
+            )
+            c.chipStrokeColor = ColorStateList(
+                arrayOf(chk, intArrayOf()), intArrayOf(pl.gold, withA(pl.muted, 0x88))
+            )
+            c.setTextColor(
+                ColorStateList(arrayOf(chk, intArrayOf()), intArrayOf(pl.gold, pl.text))
+            )
+            c.chipStrokeWidth = dp(1).toFloat()
+            c.isCheckedIconVisible = false
+            chips.addView(c)
+            chipIds[p.name] = c.id
+        }
+        val pct = com.google.android.material.slider.LabelFormatter { "${it.toInt()}%" }
+        slBass.setLabelFormatter(pct)
+        slWide.setLabelFormatter(pct)
+        slClar.setLabelFormatter(pct)
+
+        fun refresh() {
+            busy = true
+            swEq.isChecked = eq.on
+            bands.setValues(eq.bands)
+            slBass.value = eq.bass.toFloat()
+            slWide.value = eq.wide.toFloat()
+            slClar.value = eq.clarity.toFloat()
+            swLevel.isChecked = eq.level
+            slBuf.value = eq.buf.toFloat()
+            val id = chipIds[eq.preset]
+            if (id != null) chips.check(id) else chips.clearCheck()
+            busy = false
+        }
+
+        /** Cualquier ajuste a mano: pasa a "Personalizado" y enciende el ecualizador. */
+        fun custom() {
+            eq.preset = "Personalizado"
+            eq.on = true
+            busy = true
+            chips.clearCheck()
+            swEq.isChecked = true
+            busy = false
+            pushEq()
+        }
+
+        chips.setOnCheckedStateChangeListener { _, ids ->
+            if (busy) return@setOnCheckedStateChangeListener
+            val id = ids.firstOrNull() ?: return@setOnCheckedStateChangeListener
+            val p = Eq.PRESETS.firstOrNull { chipIds[it.name] == id }
+                ?: return@setOnCheckedStateChangeListener
+            eq.applyPreset(p)
+            eq.on = true
+            refresh()
+            pushEq()
+        }
+        swEq.setOnCheckedChangeListener { _, on ->
+            if (busy) return@setOnCheckedChangeListener
+            eq.on = on
+            pushEq()
+        }
+        bands.onChange = {
+            eq.bands = bands.values()
+            custom()
+        }
+        slBass.addOnChangeListener { _, value, fromUser ->
+            if (fromUser) {
+                eq.bass = value.toInt()
+                custom()
+            }
+        }
+        slWide.addOnChangeListener { _, value, fromUser ->
+            if (fromUser) {
+                eq.wide = value.toInt()
+                custom()
+            }
+        }
+        slClar.addOnChangeListener { _, value, fromUser ->
+            if (fromUser) {
+                eq.clarity = value.toInt()
+                custom()
+            }
+        }
+        swLevel.setOnCheckedChangeListener { _, on ->
+            if (busy) return@setOnCheckedChangeListener
+            eq.level = on
+            custom()
+        }
+        // Se aplica 0,7 s después del último cambio (sirve con el dedo y con las flechas del control remoto).
+        val applyBuf = Runnable {
+            val b = slBuf.value.toInt()
+            if (b != eq.buf) {
+                eq.buf = b
+                pushEq()
+                toast(when (b) { 0 -> "Mínimo retraso"; 1 -> "Equilibrado"; else -> "Máxima estabilidad" })
+                web.reload() // el búfer de audio se define al crear el ecualizador en la página
+            }
+        }
+        slBuf.addOnChangeListener { _, _, fromUser ->
+            if (fromUser) {
+                handler.removeCallbacks(applyBuf)
+                handler.postDelayed(applyBuf, 700)
+            }
+        }
+        v.findViewById<Button>(R.id.btnEqReset).setOnClickListener {
+            eq.applyPreset(Eq.PRESETS[0])
+            refresh()
+            pushEq()
+        }
+
+        dlg.setContentView(v)
+        dlg.behavior.state = BottomSheetBehavior.STATE_EXPANDED
+        dlg.behavior.skipCollapsed = true
+        // Al cerrar, se actualiza el script que corre antes que los de YouTube.
+        dlg.setOnDismissListener { installScripts() }
+        refresh()
+        dlg.show()
+    }
+
+    // ---------- comandos de la notificación y temporizador ----------
+
+    /** Ejecuta un comando (play, pausa, siguiente…) dentro de la página de YouTube. */
+    private fun runCmd(cmd: String, arg: Long) {
+        if (cmd == Media.CLOSE) {
+            web.evaluateJavascript("window.__tldCmd&&window.__tldCmd('pause',0)", null)
+            finishAndRemoveTask()
+            return
+        }
+        web.evaluateJavascript("window.__tldCmd&&window.__tldCmd('$cmd',$arg)", null)
+    }
+
+    private fun showTimerDialog() {
+        val opts = arrayOf("15 minutos", "30 minutos", "45 minutos", "1 hora", "Cancelar temporizador")
+        val mins = intArrayOf(15, 30, 45, 60, 0)
+        val left = if (timerEnd > 0) ((timerEnd - System.currentTimeMillis()) / 60000 + 1).toInt() else 0
+        MaterialAlertDialogBuilder(dlgCtx())
+            .setTitle(if (left > 0) "Se pausa en $left min" else "Pausar la reproducción en…")
+            .setItems(opts) { _, i -> setTimer(mins[i]) }
+            .setNegativeButton("Cerrar", null)
+            .show()
+    }
+
+    private fun setTimer(min: Int) {
+        handler.removeCallbacks(timerTask)
+        if (min > 0) {
+            timerEnd = System.currentTimeMillis() + min * 60_000L
+            handler.postDelayed(timerTask, min * 60_000L)
+            toast("Se pausará en $min min")
+        } else {
+            timerEnd = 0
+            toast("Temporizador cancelado")
+        }
+        paint()
+    }
+
+    private fun syncService() {
+        val i = Intent(this, KeepAliveService::class.java)
+        if (bgOn) {
+            try {
+                ContextCompat.startForegroundService(this, i)
+            } catch (_: Exception) {
+            }
+        } else {
+            stopService(i)
+        }
+    }
+
+    /** Aviso en una píldora sobre la barra de abajo (en vez del Toast del sistema). */
+    private fun toast(t: String) {
+        val p = Pal.cur
+        val v = pill ?: TextView(this).also {
+            it.textSize = 13f
+            it.gravity = Gravity.CENTER
+            it.elevation = dp(10).toFloat()
+            it.visibility = View.GONE
+            root.addView(
+                it,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                ).apply { bottomMargin = dp(88) }
+            )
+            pill = it
+        }
+        handler.removeCallbacks(hidePill)
+        v.animate().cancel()
+        v.text = t
+        v.setTextColor(p.text)
+        v.setPadding(dp(18), dp(10), dp(18), dp(10))
+        v.background = GradientDrawable().apply {
+            cornerRadius = dp(22).toFloat()
+            setColor(p.bar)
+            setStroke(dp(1), withA(p.gold, 0x55))
+        }
+        v.alpha = 0f
+        v.translationY = dp(8).toFloat()
+        v.visibility = View.VISIBLE
+        v.animate().alpha(1f).translationY(0f).setStartDelay(0).setDuration(180).start()
+        handler.postDelayed(hidePill, 1700)
+    }
+
+    companion object {
+        const val HOME = "https://m.youtube.com/"
+        const val HOME_TV = "https://www.youtube.com/"
+        /** En Smart TV se usa la web de escritorio (pantalla grande, se maneja con el puntero). */
+        const val UA_TV =
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/124.0.0.0 Safari/537.36"
+        /** Agranda un poco el texto para leerlo desde el sofá. */
+        const val TV_TEXT_ZOOM = 120
+        /** En modo ligero (web móvil) el texto se agranda más. */
+        const val TV_TEXT_ZOOM_LITE = 145
+        const val UA =
+            "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/124.0.0.0 Mobile Safari/537.36"
+
+        val AD_HOSTS = listOf(
+            "doubleclick.net",
+            "googlesyndication.com",
+            "googleadservices.com",
+            "adservice.google.com",
+            "2mdn.net",
+            "moatads.com"
+        )
+
+        /** Desplaza la página (o el panel que haya bajo el puntero) y dice si se movió. Solo Smart TV. */
+        const val JS_TV = """
+(function(){
+  if (window.__tldTv) return; window.__tldTv = true;
+  function canScroll(el) {
+    try {
+      var s = getComputedStyle(el);
+      return (s.overflowY === 'auto' || s.overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 2;
+    } catch (e) { return false; }
+  }
+  window.__tldScroll = function(dy, x, y) {
+    try {
+      var el = document.elementFromPoint(x, y);
+      while (el && el !== document.body && el !== document.documentElement) {
+        if (canScroll(el)) {
+          var before = el.scrollTop;
+          el.scrollTop = before + dy;
+          if (el.scrollTop !== before) return true;
+        }
+        el = el.parentElement;
+      }
+      var b = window.pageYOffset;
+      window.scrollBy(0, dy);
+      return window.pageYOffset !== b;
+    } catch (e) { return false; }
+  };
+})();
+"""
+
+        /** Hace creer a la página que siempre está visible, para que no pause el audio. */
+        const val JS_VISIBLE = """
+(function(){
+  if (window.__tldVis) return; window.__tldVis = true;
+  try {
+    Object.defineProperty(document, 'hidden', {configurable: true, get: function(){ return false; }});
+    Object.defineProperty(document, 'visibilityState', {configurable: true, get: function(){ return 'visible'; }});
+  } catch (e) {}
+  document.addEventListener('visibilitychange', function(e){ e.stopImmediatePropagation(); }, true);
+  try { document.hasFocus = function(){ return true; }; } catch (e) {}
+  ['blur', 'webkitvisibilitychange'].forEach(function(n) {
+    var h = function(e) { if (e.target === window || e.target === document) e.stopImmediatePropagation(); };
+    window.addEventListener(n, h, true);
+    document.addEventListener(n, h, true);
+  });
+})();
+"""
+
+        /**
+         * Motor del ecualizador (Web Audio): 10 bandas, graves, envolvente (ensancha el estéreo),
+         * claridad, nivelador de volumen y limitador final para que no distorsione.
+         * Solo se engancha al audio cuando el ecualizador está encendido.
+         */
+        const val JS_EQ = """
+(function(){
+  if (window.__tldEqInit) return; window.__tldEqInit = true;
+  var FREQS = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+  var DEF = {on: false, bands: [0,0,0,0,0,0,0,0,0,0], bass: 0, wide: 0, clarity: 0, level: false};
+  function C() { return window.__tldEqCfg || DEF; }
+  var ctx = null, src = null, n = null, el = null, last = '', routed = null;
+
+  function build(v) {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    var c;
+    var bf = C().buf;
+    var hint = bf === 0 ? 'interactive' : (bf === 2 ? 0.4 : 0.12);
+    try { c = new AC({latencyHint: hint}); } catch (e) { c = new AC(); }
+    var s = c.createMediaElementSource(v);
+    s.connect(c.destination);
+    ctx = c; src = s; routed = 'direct';
+    var x = {};
+    x.up = c.createGain();
+    x.up.channelCount = 2; x.up.channelCountMode = 'explicit'; x.up.channelInterpretation = 'speakers';
+    x.pre = c.createGain();
+    x.bands = [];
+    var prev = x.pre;
+    x.up.connect(x.pre);
+    for (var i = 0; i < FREQS.length; i++) {
+      var b = c.createBiquadFilter();
+      b.type = 'peaking'; b.frequency.value = FREQS[i]; b.Q.value = 1.1; b.gain.value = 0;
+      prev.connect(b); prev = b; x.bands.push(b);
+    }
+    x.bass = c.createBiquadFilter(); x.bass.type = 'lowshelf'; x.bass.frequency.value = 100; x.bass.gain.value = 0;
+    x.clar = c.createBiquadFilter(); x.clar.type = 'highshelf'; x.clar.frequency.value = 3500; x.clar.gain.value = 0;
+    prev.connect(x.bass); x.bass.connect(x.clar);
+    // Envolvente: L' = L + w*(L-R)/2 ; R' = R - w*(L-R)/2
+    x.split = c.createChannelSplitter(2);
+    x.merge = c.createChannelMerger(2);
+    x.invR = c.createGain(); x.invR.gain.value = -1;
+    x.side = c.createGain(); x.side.gain.value = 0;
+    x.negSide = c.createGain(); x.negSide.gain.value = -1;
+    x.clar.connect(x.split);
+    x.split.connect(x.merge, 0, 0);
+    x.split.connect(x.merge, 1, 1);
+    x.split.connect(x.side, 0);
+    x.split.connect(x.invR, 1);
+    x.invR.connect(x.side);
+    x.side.connect(x.merge, 0, 0);
+    x.side.connect(x.negSide);
+    x.negSide.connect(x.merge, 0, 1);
+    // Nivelador + limitador
+    x.comp = c.createDynamicsCompressor();
+    x.comp.threshold.value = 0; x.comp.knee.value = 20; x.comp.ratio.value = 1;
+    x.comp.attack.value = 0.01; x.comp.release.value = 0.25;
+    x.makeup = c.createGain();
+    x.lim = c.createDynamicsCompressor();
+    x.lim.threshold.value = -2; x.lim.knee.value = 0; x.lim.ratio.value = 20;
+    x.lim.attack.value = 0.003; x.lim.release.value = 0.1;
+    // El nivelador (compresor) solo se conecta cuando "Nivelar volumen" está activo: así gasta menos procesador.
+    x.merge.connect(x.makeup); x.comp.connect(x.makeup); x.makeup.connect(x.lim); x.lim.connect(c.destination);
+    // Analizador: solo mide el nivel para el visualizador (no cambia el sonido). Escucha la señal antes del ecualizador.
+    x.an = c.createAnalyser(); x.an.fftSize = 256; x.an.smoothingTimeConstant = 0.6;
+    s.connect(x.an);
+    x.lv = false;
+    n = x;
+  }
+
+  function apply() {
+    if (!n) return;
+    var c = C(), t = ctx.currentTime, maxB = 0, i;
+    for (i = 0; i < 10; i++) {
+      var g = c.bands[i] || 0;
+      n.bands[i].gain.setTargetAtTime(g, t, 0.03);
+      if (g > maxB) maxB = g;
+    }
+    var bassDb = (c.bass || 0) * 0.12, clarDb = (c.clarity || 0) * 0.08;
+    if (bassDb > maxB) maxB = bassDb;
+    n.bass.gain.setTargetAtTime(bassDb, t, 0.03);
+    n.clar.gain.setTargetAtTime(clarDb, t, 0.03);
+    n.pre.gain.setTargetAtTime(Math.pow(10, -(maxB * 0.6) / 20), t, 0.05);
+    n.side.gain.setTargetAtTime((c.wide || 0) / 100 * 1.2 / 2, t, 0.05);
+    var lv = !!c.level;
+    if (lv) {
+      n.comp.threshold.value = -32; n.comp.ratio.value = 4;
+      n.makeup.gain.setTargetAtTime(Math.pow(10, 5 / 20), t, 0.05);
+    } else {
+      n.makeup.gain.setTargetAtTime(1, t, 0.05);
+    }
+    if (lv !== n.lv) {
+      try { n.merge.disconnect(); } catch (e) {}
+      n.merge.connect(lv ? n.comp : n.makeup);
+      n.lv = lv;
+    }
+    var want = c.on ? 'fx' : 'direct';
+    if (want !== routed) {
+      try { src.disconnect(); } catch (e) {}
+      src.connect(c.on ? n.up : ctx.destination);
+      try { src.connect(n.an); } catch (e) {}
+      routed = want;
+    }
+  }
+
+  function tick() {
+    try {
+      var c = C(), v = document.querySelector('video');
+      if (c.on && v && v !== el) {
+        if (ctx) { try { ctx.close(); } catch (e) {} ctx = null; src = null; n = null; routed = null; }
+        el = v;
+        try { build(v); } catch (e) { n = null; }
+        last = '';
+      }
+      var j = JSON.stringify(c);
+      if (n && j !== last) { last = j; apply(); }
+      if (ctx && ctx.state !== 'running') { ctx.resume(); }
+    } catch (e) {}
+  }
+  window.__tldEqResume = function() { try { if (ctx && ctx.state !== 'running') ctx.resume(); } catch (e) {} };
+  window.__tldEqState = function() { return ctx ? ctx.state : 'sin eq'; };
+  setInterval(tick, 300);
+  var vctx = null, van = null, vsrc = null, vel = null, vbins = null, vpk = 0.3, vtry = 0;
+  var RNG = [[0,2],[2,4],[4,8],[8,16],[16,32],[32,80]];
+  var GAIN = [1, 1.15, 1.4, 1.8, 2.4, 3.4];
+  function viz(v) {
+    if (n && n.an && ctx && ctx.state === 'running') return n.an;
+    if (!v || !v.captureStream) return null;
+    if (vel !== v) {
+      if (vctx) { try { vctx.close(); } catch (e) {} vctx = null; van = null; vsrc = null; }
+      vel = null;
+    }
+    if (!van) {
+      if (Date.now() - vtry < 1000) return null;
+      vtry = Date.now();
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      var st = v.captureStream(), tr = st.getAudioTracks();
+      if (!tr.length) return null;
+      vctx = new AC();
+      vsrc = vctx.createMediaStreamSource(new MediaStream(tr));
+      van = vctx.createAnalyser(); van.fftSize = 256; van.smoothingTimeConstant = 0.6;
+      vsrc.connect(van);
+      vel = v;
+    }
+    if (vctx.state !== 'running') { try { vctx.resume(); } catch (e) {} }
+    return vctx.state === 'running' ? van : null;
+  }
+  setInterval(function() {
+    try {
+      if (!window.TLD || !window.TLD.lv) return;
+      var v = document.querySelector('video');
+      if (!v || v.paused || v.ended) return;
+      var an = viz(v);
+      if (!an) return;
+      if (!vbins || vbins.length !== an.frequencyBinCount) vbins = new Uint8Array(an.frequencyBinCount);
+      an.getByteFrequencyData(vbins);
+      var raw = [], i, j, mx = 0;
+      for (i = 0; i < RNG.length; i++) {
+        var sum = 0, cnt = 0;
+        for (j = RNG[i][0]; j < RNG[i][1] && j < vbins.length; j++) { sum += vbins[j]; cnt++; }
+        var r = (cnt ? sum / cnt / 255 : 0) * GAIN[i];
+        raw.push(r);
+        if (r > mx) mx = r;
+      }
+      vpk = Math.max(mx, vpk * 0.995, 0.25);
+      var o = [];
+      for (i = 0; i < raw.length; i++) { o.push(Math.min(1, Math.pow(raw[i] / vpk, 1.15)).toFixed(2)); }
+      window.TLD.lv(o.join(','));
+    } catch (e) {}
+  }, 80);
+})();
+"""
+
+        /** Informa qué suena (título, carátula, posición) y obedece los botones de la notificación. */
+        const val JS_MEDIA = """
+(function(){
+  if (window.__tldMedia) return; window.__tldMedia = true;
+  function vid() { return document.querySelector('video'); }
+  function txt(sel) {
+    try { var e = document.querySelector(sel); return e ? (e.textContent || '').trim() : ''; } catch (x) { return ''; }
+  }
+  function report() {
+    try {
+      var v = vid();
+      if (!v || !window.TLD) return;
+      var t = '', a = '', art = '';
+      var m = navigator.mediaSession && navigator.mediaSession.metadata;
+      if (m) {
+        t = m.title || ''; a = m.artist || '';
+        var aw = m.artwork;
+        if (aw && aw.length) { art = aw[aw.length - 1].src || ''; }
+      }
+      if (!t) { t = txt('.slim-video-information-title, h2.slim-video-metadata-title, ytm-slim-video-metadata-section-renderer h2, .ytp-title-link, .ytp-title-text'); }
+      if (!t) { t = (document.title || '').replace(/ - YouTube${'$'}/, ''); }
+      if (t === 'YouTube') { t = ''; }
+      if (!a) { a = txt('ytm-slim-owner-renderer .yt-core-attributed-string, .slim-owner-channel-name, ytm-slim-owner-renderer a, .ytp-title-channel-name'); }
+      if (!art) {
+        var id = '';
+        try { id = new URLSearchParams(location.search).get('v') || ''; } catch (e) {}
+        if (/^[A-Za-z0-9_-]{6,15}${'$'}/.test(id)) { art = 'https://i.ytimg.com/vi/' + id + '/hqdefault.jpg'; }
+      }
+      var dur = isFinite(v.duration) ? v.duration * 1000 : 0;
+      window.TLD.update(t, a, art, !v.paused && !v.ended, (v.currentTime || 0) * 1000, dur);
+    } catch (e) {}
+  }
+  if (!window.__tldLite) setInterval(report, 1000);
+
+  function find(cls, re) {
+    var b = document.querySelector(cls);
+    if (b) return b;
+    var scope = document.querySelector('#movie_player, .html5-video-player, #player-container-id');
+    if (!scope) return null;
+    var bs = scope.querySelectorAll('button, [role=button]');
+    for (var i = 0; i < bs.length; i++) {
+      var l = bs[i].getAttribute('aria-label') || '';
+      if (re.test(l)) return bs[i];
+    }
+    return null;
+  }
+
+  function ytp() { return document.getElementById('movie_player') || document.querySelector('.html5-video-player'); }
+  // Reproduce usando primero el reproductor de YouTube y, si no, el video; al final prueba su botón.
+  function dismissIdle() {
+    try {
+      var ds = document.querySelectorAll('ytm-confirm-dialog-renderer, yt-confirm-dialog-renderer, ytm-dialog, tp-yt-paper-dialog');
+      for (var i = 0; i < ds.length; i++) {
+        var t = ds[i].textContent || '';
+        if (/(sigues ah|still watching|continuar viendo|continue watching|seguir viendo)/i.test(t)) {
+          var b = ds[i].querySelector('#confirm-button button, #confirm-button, button');
+          if (b) { b.click(); return true; }
+        }
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  // Si algo de la página vuelve a pausar el video justo después de dar play, se insiste unos segundos.
+  window.__tldWant = 0;
+  document.addEventListener('pause', function(e) {
+    try {
+      if (Date.now() < window.__tldWant && e.target && e.target.tagName === 'VIDEO') {
+        var t = e.target;
+        setTimeout(function() {
+          try {
+            if (Date.now() < window.__tldWant && t.paused) {
+              var p = ytp();
+              if (p && p.playVideo) p.playVideo();
+              var r = t.play();
+              if (r && r.catch) r.catch(function(){});
+            }
+          } catch (x) {}
+        }, 60);
+      }
+    } catch (x) {}
+  }, true);
+
+  function playIt() {
+    var v = vid(), p = ytp(), err = '';
+    window.__tldWant = Date.now() + 4000;
+    dismissIdle();
+    try { if (window.__tldEqResume) window.__tldEqResume(); } catch (e) {}
+    try { if (v && v.ended) v.currentTime = 0; } catch (e) {}
+    try { if (p && p.playVideo) p.playVideo(); } catch (e) { err = 'api ' + e; }
+    try {
+      if (v) {
+        var r = v.play();
+        if (r && r.catch) r.catch(function(e) { err = (e && e.name) || String(e); });
+      }
+    } catch (e) { err = String(e); }
+    setTimeout(function() {
+      try {
+        dismissIdle();
+        var v2 = vid();
+        if (v2 && v2.paused) {
+          var b = document.querySelector('.ytp-play-button, .player-control-play-pause-icon, .ytp-large-play-button');
+          if (b) b.click();
+        }
+      } catch (e) {}
+    }, 400);
+    setTimeout(function() {
+      try {
+        var v3 = vid();
+        if (window.TLD && window.TLD.dbg && (!v3 || v3.paused)) {
+          var ps = '?';
+          try { if (p && p.getPlayerState) ps = p.getPlayerState(); } catch (e) {}
+          window.TLD.dbg('Play sin efecto. ' + (!v3 ? 'No hay video. ' : 'ready=' + v3.readyState + ' ended=' + v3.ended + ' ') +
+            'yt=' + ps + ' eq=' + (window.__tldEqState ? window.__tldEqState() : '?') + ' foco=' + document.hasFocus() + (err ? ' error=' + err : ''));
+        }
+      } catch (e) {}
+    }, 2500);
+  }
+  function pauseIt() {
+    window.__tldWant = 0;
+    var v = vid(), p = ytp();
+    try { if (p && p.pauseVideo) p.pauseVideo(); } catch (e) {}
+    try { if (v) v.pause(); } catch (e) {}
+  }
+
+  window.__tldCmd = function(c, arg) {
+    try {
+      var v = vid();
+      if (c === 'play') { playIt(); return; }
+      if (c === 'pause') { pauseIt(); return; }
+      if (c === 'toggle') { if (v && !v.paused && !v.ended) pauseIt(); else playIt(); return; }
+      if (c === 'seek') { if (v) v.currentTime = arg / 1000; return; }
+      if (c === 'seekrel') {
+        if (v) {
+          var d = isFinite(v.duration) ? v.duration : 1e9;
+          v.currentTime = Math.max(0, Math.min(d, (v.currentTime || 0) + arg / 1000));
+        }
+        return;
+      }
+      if (c === 'next') {
+        var n = find('.ytp-next-button', /(siguiente|next)/i);
+        if (n) { n.click(); return; }
+        var a = document.querySelector('ytm-compact-video-renderer a[href*="/watch"], ytm-video-with-context-renderer a[href*="/watch"]');
+        if (a) a.click();
+        return;
+      }
+      if (c === 'prev') {
+        if (v && v.currentTime > 3) { v.currentTime = 0; return; }
+        var p = find('.ytp-prev-button', /(anterior|previous)/i);
+        if (p) { p.click(); return; }
+        if (v) v.currentTime = 0;
+      }
+    } catch (e) {}
+  };
+})();
+"""
+
+        /** Quita los anuncios de los datos de YouTube antes de que el reproductor los vea. */
+        const val JS_ADS = """
+(function(){
+  if (window.__tldAds) return; window.__tldAds = true;
+  var KEYS = ['adPlacements', 'playerAds', 'adSlots', 'adBreakHeartbeatParams'];
+  function clean(r) {
+    try {
+      if (!r || typeof r !== 'object') return r;
+      if (Array.isArray(r)) { for (var i = 0; i < r.length; i++) clean(r[i]); return r; }
+      for (var k = 0; k < KEYS.length; k++) {
+        if (KEYS[k] in r) { try { delete r[KEYS[k]]; } catch (e) {} }
+      }
+      if (r.playerResponse) clean(r.playerResponse);
+    } catch (e) {}
+    return r;
+  }
+  try {
+    var _parse = JSON.parse;
+    JSON.parse = function() { return clean(_parse.apply(this, arguments)); };
+  } catch (e) {}
+  try {
+    var _json = Response.prototype.json;
+    Response.prototype.json = function() {
+      return _json.apply(this, arguments).then(function(r) { return clean(r); });
+    };
+  } catch (e) {}
+  try {
+    var _ipr = window.ytInitialPlayerResponse;
+    Object.defineProperty(window, 'ytInitialPlayerResponse', {
+      configurable: true,
+      get: function() { return _ipr; },
+      set: function(v) { _ipr = clean(v); }
+    });
+  } catch (e) {}
+
+  var css = 'ytd-ad-slot-renderer, ytm-promoted-sparkles-web-renderer, ytm-promoted-video-renderer, ' +
+    'ytm-companion-ad-renderer, ytm-display-ad-renderer, ytd-display-ad-renderer, ' +
+    'ytd-promoted-sparkles-web-renderer, ytd-banner-promo-renderer, ytm-statement-banner-renderer, ' +
+    'ytm-brand-video-singleton-renderer, ytm-mealbar-promo-renderer, ytm-ad-slot-renderer, ad-slot-renderer, ' +
+    'ytm-promoted-sparkles-text-search-renderer, ytm-in-feed-ad-layout-renderer, ytm-banner-promo-renderer, ' +
+    '#masthead-ad, #player-ads, .ytp-ad-overlay-container, .ytp-ad-image-overlay, .ytp-ad-text-overlay ' +
+    '{ display: none !important; }';
+  function addCss() {
+    var t = document.head || document.documentElement;
+    if (!t) { setTimeout(addCss, 50); return; }
+    var st = document.createElement('style');
+    st.textContent = css;
+    t.appendChild(st);
+  }
+  addCss();
+
+  var skipSel = ['.ytp-ad-skip-button', '.ytp-ad-skip-button-modern', '.ytp-skip-ad-button',
+    '.ytp-ad-overlay-close-button'];
+
+  function tick() {
+    try {
+      var v = document.querySelector('video');
+      var pl = document.querySelector('#movie_player') || document.querySelector('.html5-video-player');
+      var ad = pl && (pl.classList.contains('ad-showing') || pl.classList.contains('ad-interrupting'));
+      if (ad && v) {
+        if (!v.__tldAd) { v.__tldAd = true; v.__tldMuted = v.muted; v.__tldRate = v.playbackRate; }
+        v.muted = true;
+        v.playbackRate = 16;
+        if (isFinite(v.duration) && v.duration > 0) { v.currentTime = v.duration; }
+      } else if (v && v.__tldAd) {
+        v.__tldAd = false;
+        v.muted = v.__tldMuted;
+        v.playbackRate = v.__tldRate || 1;
+      }
+      for (var i = 0; i < skipSel.length; i++) {
+        var b = document.querySelector(skipSel[i]);
+        if (b) { b.click(); }
+      }
+    } catch (e) {}
+  }
+  setInterval(tick, 400);
+})();
+"""
+    }
+}

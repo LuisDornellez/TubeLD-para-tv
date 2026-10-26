@@ -1,0 +1,33 @@
+<resources>
+    <style name="Theme.TubeLD" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/gold</item>
+        <item name="colorOnPrimary">@color/bg</item>
+        <item name="colorSurface">@color/bar</item>
+        <item name="colorSurfaceContainer">@color/bar</item>
+        <item name="colorSurfaceContainerLow">@color/bar</item>
+        <item name="colorSurfaceContainerHigh">@color/bar</item>
+        <item name="colorOnSurface">#ECECF1</item>
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:navigationBarColor">@color/bar</item>
+    </style>
+
+    <!-- Tema de arranque: fondo oscuro con el logo mientras abre la app (ligero, sin código) -->
+    <style name="Theme.TubeLDSplash" parent="Theme.TubeLD">
+        <item name="android:windowBackground">@drawable/splash_bg</item>
+    </style>
+
+    <!-- Tema claro: se usa en los diálogos cuando está el modo día -->
+    <style name="Theme.TubeLDDay" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/gold_day</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSurface">@color/bar_day</item>
+        <item name="colorSurfaceContainer">@color/bar_day</item>
+        <item name="colorSurfaceContainerLow">@color/bar_day</item>
+        <item name="colorSurfaceContainerHigh">@color/bar_day</item>
+        <item name="colorOnSurface">#14141C</item>
+        <item name="android:windowBackground">@color/bg_day</item>
+        <item name="android:statusBarColor">@color/bg_day</item>
+        <item name="android:navigationBarColor">@color/bar_day</item>
+    </style>
+</resources>

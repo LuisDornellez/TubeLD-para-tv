@@ -1,0 +1,8 @@
+<resources>
+    <!-- Android 12 o más: el sistema muestra esta pantalla de inicio -->
+    <style name="Theme.TubeLDSplash" parent="Theme.TubeLD">
+        <item name="android:windowSplashScreenBackground">@color/bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash</item>
+        <item name="android:windowBackground">@drawable/splash_bg</item>
+    </style>
+</resources>
