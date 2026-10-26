@@ -1562,7 +1562,7 @@ class MainActivity : AppCompatActivity() {
     var t = document.head || document.documentElement;
     if (!t) { setTimeout(addCss, 50); return; }
     var st = document.createElement('style');
-    st.textContent = '.ytp-caption-segment,.captions-text,.caption-visual-line{font-size:15px !important;line-height:1.35 !important;}';
+    st.textContent = '*{scroll-behavior:auto !important;}.ytp-caption-segment,.captions-text,.caption-visual-line{font-size:15px !important;line-height:1.35 !important;}';
     t.appendChild(st);
   })();
   window.__tldScroll = function(dy, x, y) {
@@ -1570,15 +1570,36 @@ class MainActivity : AppCompatActivity() {
       var el = document.elementFromPoint(x, y);
       while (el && el !== document.body && el !== document.documentElement) {
         if (canScroll(el)) {
-          var before = el.scrollTop;
-          el.scrollTop = before + dy;
-          if (el.scrollTop !== before) return true;
+          var b0 = el.scrollTop;
+          el.scrollTop = b0 + dy;
+          if (Math.abs(el.scrollTop - b0) > 0.5) return true;
         }
         el = el.parentElement;
       }
-      var b = window.pageYOffset;
+      var se = document.scrollingElement || document.documentElement;
+      var b = se.scrollTop;
+      se.scrollTop = b + dy;
+      if (Math.abs(se.scrollTop - b) > 0.5) return true;
+      b = window.pageYOffset;
       window.scrollBy(0, dy);
-      return window.pageYOffset !== b;
+      if (Math.abs(window.pageYOffset - b) > 0.5) return true;
+      if (document.body) {
+        b = document.body.scrollTop;
+        document.body.scrollTop = b + dy;
+        if (Math.abs(document.body.scrollTop - b) > 0.5) return true;
+      }
+      // Algunas paginas desplazan un panel interno grande en vez del documento.
+      var ns = document.querySelectorAll('ytd-app,ytd-page-manager,ytd-watch-flexy,main,section,div'), i, n = Math.min(ns.length, 4000);
+      for (i = 0; i < n; i++) {
+        var c = ns[i];
+        if (c.clientHeight < innerHeight * 0.3 || c.scrollHeight <= c.clientHeight + 2) continue;
+        var oy = getComputedStyle(c).overflowY;
+        if (oy !== 'auto' && oy !== 'scroll' && oy !== 'overlay') continue;
+        var t = c.scrollTop;
+        c.scrollTop = t + dy;
+        if (Math.abs(c.scrollTop - t) > 0.5) return true;
+      }
+      return false;
     } catch (e) { return false; }
   };
 })();

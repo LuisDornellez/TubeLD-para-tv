@@ -86,3 +86,7 @@ Se activa solo en una TV de 1 GB de RAM o marcada por el sistema como de poca me
 - Se eliminó el botón flotante, el reproductor flotante y la imagen en imagen (y el permiso «Mostrar sobre otras apps»).
 - Visualizador en la notificación: el nombre «tubeLD» abajo en la carátula y, a su lado, un visualizador radial en paleta Esmeralda (rayitas en círculo: menta, verde y petróleo). Sigue la música real; solo si el sistema no deja medir el audio, el movimiento es simulado. Se anima unas 4 veces por segundo y solo con la pantalla encendida.
 - Visualizador radial en la barra superior: junto al nombre «tubeLD», un círculo de rayitas en paleta Esmeralda (menta, verde y petróleo) que crecen con la música mientras el color fluye suavemente. En reposo queda quieto y pequeño. Sigue la música real; solo si el sistema no deja medir el audio, el movimiento es simulado.
+
+## Corrección 1.9.1 — Desplazamiento en TV
+- En modo flechas, al llegar al último elemento visible la página ahora baja de verdad (antes saltaba a la barra de abajo sin bajar).
+- Se desactiva el desplazamiento suave de la página para que el script detecte bien si se movió, y se prueban más contenedores con scroll propio.
