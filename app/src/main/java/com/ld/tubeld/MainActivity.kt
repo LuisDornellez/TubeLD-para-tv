@@ -14,7 +14,9 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.animation.ValueAnimator
 import android.graphics.RectF
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.StateListDrawable
 import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.RippleDrawable
@@ -110,6 +112,13 @@ class MainActivity : AppCompatActivity() {
 
     // ---- Smart TV (control remoto) ----
     private var isTv = false
+
+    // ---- Descanso visual: tinte cálido (menos luz azul) y atenuado, encima de toda la app ----
+    private lateinit var btnRest: ImageButton
+    private val restBg = LayerDrawable(arrayOf(ColorDrawable(0), ColorDrawable(0)))
+    private var restOn = false
+    private var restBlue = 50
+    private var restDim = 20
     /** Modo ligero: TV con poca memoria (1 GB). Web móvil, sin ecualizador, visualizador, notificación ni segundo plano. */
     private var lite = false
     private var edgeBlockedUp = false
@@ -168,6 +177,7 @@ class MainActivity : AppCompatActivity() {
         root = findViewById(R.id.root)
         splash = findViewById(R.id.splash)
         btnExit = findViewById(R.id.btnExit)
+        btnRest = findViewById(R.id.btnRest)
         bottomBar = findViewById(R.id.bottomBar)
         divider = findViewById(R.id.divider)
         topBar = findViewById(R.id.topBar)
@@ -226,6 +236,7 @@ class MainActivity : AppCompatActivity() {
             toast(if (night) "Modo noche" else "Modo día")
             web.reload()
         }
+        setupRest()
         if (isTv) setupTv()
         if (lite) {
             // Menos funciones = menos memoria. El nombre tubeLD y el bloqueo de anuncios se quedan.
@@ -238,6 +249,8 @@ class MainActivity : AppCompatActivity() {
         for (i in 0 until bb.childCount) pressFx(bb.getChildAt(i))
         pressFx(btnTheme)
         pressFx(btnExit)
+        pressFx(btnRest)
+        btnRest.setOnClickListener { showRestDialog() }
         btnExit.setOnClickListener { showExitDialog() }
         if (savedInstanceState == null) {
             showSplash()
@@ -339,6 +352,7 @@ class MainActivity : AppCompatActivity() {
         val l = ArrayList<View>()
         val bb = bottomBar as ViewGroup
         for (i in 0 until bb.childCount) l.add(bb.getChildAt(i))
+        l.add(btnRest)
         l.add(btnTheme)
         l.add(btnExit)
         return l
@@ -355,7 +369,7 @@ class MainActivity : AppCompatActivity() {
         size(topBar, 0, dp(72))
         topBar.setPadding(dp(36), 0, dp(28), 0)
         tvLogo.textSize = 28f
-        for (b in listOf(btnTheme, btnExit)) {
+        for (b in listOf(btnRest, btnTheme, btnExit)) {
             size(b, dp(52), dp(52))
             b.setPadding(dp(12), dp(12), dp(12), dp(12))
         }
@@ -381,7 +395,7 @@ class MainActivity : AppCompatActivity() {
     private fun applyFocusRings() {
         val p = Pal.cur
         for (v in tvFocusables()) {
-            val top = v === btnTheme || v === btnExit
+            val top = v === btnRest || v === btnTheme || v === btnExit
             val ring = GradientDrawable().apply {
                 cornerRadius = dp(16).toFloat()
                 setColor(withA(p.gold, 0x26))
@@ -993,6 +1007,7 @@ class MainActivity : AppCompatActivity() {
         tint(btnBg, bgOn)
         tint(btnTimer, timerEnd > 0)
         tint(btnEq, eq.on)
+        tintIcon(btnRest, restOn)
         tvBadge.text = if (adsOn) "Sin anuncios" else "Anuncios permitidos"
     }
 
@@ -1019,6 +1034,96 @@ class MainActivity : AppCompatActivity() {
         val ripple = ColorStateList.valueOf(withA(p.gold, 0x33))
         b.background = if (on) RippleDrawable(ripple, shape(withA(p.gold, 0x24)), null)
         else RippleDrawable(ripple, null, shape(Color.BLACK))
+    }
+
+    // ---------- descanso visual ----------
+
+    private fun setupRest() {
+        restOn = prefs.getBoolean("rest_on", false)
+        restBlue = prefs.getInt("rest_blue", 50)
+        restDim = prefs.getInt("rest_dim", 20)
+        val v = View(this)
+        v.background = restBg
+        v.isClickable = false
+        v.isFocusable = false
+        v.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        root.addView(
+            v,
+            FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        )
+        applyRest()
+    }
+
+    /** Ámbar encima (quita azul) y negro encima (baja el brillo); nunca llega a oscurecer del todo. */
+    private fun applyRest() {
+        val a1 = if (restOn) (restBlue * 0.5f * 2.55f).toInt() else 0
+        val a2 = if (restOn) (restDim * 0.6f * 2.55f).toInt() else 0
+        (restBg.getDrawable(0) as ColorDrawable).color = withA(0xFFFF8C1A.toInt(), a1)
+        (restBg.getDrawable(1) as ColorDrawable).color = withA(Color.BLACK, a2)
+        restBg.invalidateSelf()
+        if (::btnRest.isInitialized) tintIcon(btnRest, restOn)
+    }
+
+    @SuppressLint("InflateParams")
+    private fun showRestDialog() {
+        val ctx = dlgCtx()
+        val dlg = BottomSheetDialog(ctx)
+        val v = LayoutInflater.from(ctx).inflate(R.layout.dialog_rest, null)
+        val sw = v.findViewById<MaterialSwitch>(R.id.swRest)
+        val slB = v.findViewById<Slider>(R.id.slBlue)
+        val slD = v.findViewById<Slider>(R.id.slDim)
+        val pct = com.google.android.material.slider.LabelFormatter { "${it.toInt()}%" }
+        slB.setLabelFormatter(pct)
+        slD.setLabelFormatter(pct)
+        var busy = false
+
+        fun refresh() {
+            busy = true
+            sw.isChecked = restOn
+            slB.value = restBlue.toFloat()
+            slD.value = restDim.toFloat()
+            busy = false
+        }
+        fun save() {
+            prefs.edit().putBoolean("rest_on", restOn).putInt("rest_blue", restBlue)
+                .putInt("rest_dim", restDim).apply()
+            applyRest()
+        }
+        sw.setOnCheckedChangeListener { _, on ->
+            if (busy) return@setOnCheckedChangeListener
+            restOn = on
+            save()
+        }
+        slB.addOnChangeListener { _, value, fromUser ->
+            if (!fromUser) return@addOnChangeListener
+            restBlue = value.toInt()
+            restOn = true
+            busy = true
+            sw.isChecked = true
+            busy = false
+            save()
+        }
+        slD.addOnChangeListener { _, value, fromUser ->
+            if (!fromUser) return@addOnChangeListener
+            restDim = value.toInt()
+            restOn = true
+            busy = true
+            sw.isChecked = true
+            busy = false
+            save()
+        }
+        v.findViewById<Button>(R.id.btnRestPreset).setOnClickListener {
+            restBlue = 60
+            restDim = 25
+            restOn = true
+            refresh()
+            save()
+        }
+        dlg.setContentView(v)
+        dlg.behavior.state = BottomSheetBehavior.STATE_EXPANDED
+        dlg.behavior.skipCollapsed = true
+        refresh()
+        dlg.show()
     }
 
     // ---------- ecualizador ----------

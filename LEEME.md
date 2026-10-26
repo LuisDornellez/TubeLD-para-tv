@@ -71,6 +71,11 @@ Se activa solo en una TV de 1 GB de RAM o marcada por el sistema como de poca me
 - Se quedan el nombre **tubeLD**, el bloqueo de anuncios, el modo día/noche y el control remoto (puntero, play/pausa, adelantar y retroceder).
 - Para que el límite sea otro, cambia `1_600_000_000L` en `detectLite()` (MainActivity.kt).
 
+## Descanso visual (luz azul)
+- Botón del **ojo**, arriba a la derecha (junto al sol/luna). Abre un panel con un interruptor y dos barras: **Luz azul** (tiñe la pantalla de cálido) y **Atenuar** (baja el brillo). El botón "Descanso recomendado" pone 60 % y 25 %.
+- Se recuerda al cerrar la app. Funciona en móvil y en TV, también en modo ligero; no gasta casi memoria.
+- Es una capa de color sobre la app, no cambia el brillo real de la TV. El panel mismo no se tiñe. Si el video en pantalla completa no se tiñe en algún aparato, es una limitación del reproductor del sistema.
+
 ## Nota
 - Se eliminó el botón flotante, el reproductor flotante y la imagen en imagen (y el permiso «Mostrar sobre otras apps»).
 - Visualizador en la notificación: el nombre «tubeLD» abajo en la carátula y, a su lado, un visualizador radial en paleta Esmeralda (rayitas en círculo: menta, verde y petróleo). Sigue la música real; solo si el sistema no deja medir el audio, el movimiento es simulado. Se anima unas 4 veces por segundo y solo con la pantalla encendida.
