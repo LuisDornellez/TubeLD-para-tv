@@ -69,6 +69,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.chip.ChipGroup
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.google.android.material.slider.Slider
+import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import java.io.ByteArrayInputStream
@@ -115,7 +116,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnNav: ImageButton
     private lateinit var btnQuality: ImageButton
     /** true = flechas (se salta de botón en botón de la página); false = ratón (puntero). */
-    private var navMode = true
+    private var navMode = false
     private var fsPointer = false
     private var okLong = false
 
@@ -186,7 +187,7 @@ class MainActivity : AppCompatActivity() {
         btnRest = findViewById(R.id.btnRest)
         btnNav = findViewById(R.id.btnNav)
         btnQuality = findViewById(R.id.btnQuality)
-        navMode = prefs.getBoolean("navmode", true)
+        navMode = false // solo modo ratón
         bottomBar = findViewById(R.id.bottomBar)
         divider = findViewById(R.id.divider)
         topBar = findViewById(R.id.topBar)
@@ -261,7 +262,7 @@ class MainActivity : AppCompatActivity() {
         pressFx(btnRest)
         btnRest.setOnClickListener { showRestDialog() }
         btnQuality.setOnClickListener { showQualityDialog() }
-        btnNav.visibility = if (isTv) View.VISIBLE else View.GONE
+        btnNav.visibility = View.GONE // sin botón: solo modo ratón
         pressFx(btnNav)
         btnNav.setOnClickListener {
             navMode = !navMode
@@ -371,7 +372,6 @@ class MainActivity : AppCompatActivity() {
         val l = ArrayList<View>()
         val bb = bottomBar as ViewGroup
         for (i in 0 until bb.childCount) l.add(bb.getChildAt(i))
-        l.add(btnNav)
         l.add(btnRest)
         l.add(btnTheme)
         l.add(btnExit)
@@ -686,9 +686,20 @@ class MainActivity : AppCompatActivity() {
         }
         if (cursor.visibility != View.VISIBLE) {
             cursor.visibility = View.VISIBLE
+        }
+        run {
+            // Si la posicion quedo fuera de la pagina (por ejemplo al salir de pantalla completa), se vuelve a meter.
+            val b = webBounds()
+            val m = dp(6).toFloat()
             if (cursor.px == 0f && cursor.py == 0f) {
-                val b = webBounds()
                 cursor.moveTo(b.centerX(), b.centerY())
+            } else if (cursor.px < b.left + m || cursor.px > b.right - m ||
+                cursor.py < b.top + m || cursor.py > b.bottom - m
+            ) {
+                cursor.moveTo(
+                    cursor.px.coerceIn(b.left + m, b.right - m),
+                    cursor.py.coerceIn(b.top + m, b.bottom - m)
+                )
             }
         }
         cursor.animate().cancel()
@@ -797,6 +808,13 @@ class MainActivity : AppCompatActivity() {
         s.mediaPlaybackRequiresUserGesture = false
         s.userAgentString = if (isTv && !lite) UA_TV else UA
         if (isTv) s.textZoom = if (lite) TV_TEXT_ZOOM_LITE else TV_TEXT_ZOOM
+        // Quita la cabecera X-Requested-With (nombre del paquete) que delata al WebView; Google la usa para bloquear el inicio de sesion.
+        try {
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
+                WebSettingsCompat.setRequestedWithHeaderOriginAllowList(s, emptySet())
+            }
+        } catch (_: Throwable) {
+        }
         // El proceso de la página mantiene prioridad alta aunque la app esté en segundo plano.
         if (!lite) web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
         web.addJavascriptInterface(WebBridge(), "TLD")
@@ -1588,6 +1606,9 @@ class MainActivity : AppCompatActivity() {
         document.body.scrollTop = b + dy;
         if (Math.abs(document.body.scrollTop - b) > 0.5) return true;
       }
+      // Evita repetir el barrido (pesado en TVs viejas) si hace un momento no habia nada que desplazar.
+      var now = Date.now(), hh = se.scrollHeight;
+      if (window.__tldNoScroll && now - window.__tldNoScroll.t < 1500 && window.__tldNoScroll.h === hh) return false;
       // Algunas paginas desplazan un panel interno grande en vez del documento.
       var ns = document.querySelectorAll('ytd-app,ytd-page-manager,ytd-watch-flexy,main,section,div'), i, n = Math.min(ns.length, 4000);
       for (i = 0; i < n; i++) {
@@ -1599,6 +1620,7 @@ class MainActivity : AppCompatActivity() {
         c.scrollTop = t + dy;
         if (Math.abs(c.scrollTop - t) > 0.5) return true;
       }
+      window.__tldNoScroll = {t: now, h: hh};
       return false;
     } catch (e) { return false; }
   };
@@ -2062,6 +2084,35 @@ class MainActivity : AppCompatActivity() {
     try { if (v) v.pause(); } catch (e) {}
   }
 
+  /** Pasa al siguiente video: botón del reproductor y, si no sirve, el primer video sugerido (móvil o escritorio). */
+  function goNext() {
+    var n = find('.ytp-next-button', /(siguiente|next)/i);
+    if (n && n.offsetParent !== null && n.getAttribute('aria-disabled') !== 'true') { n.click(); return true; }
+    var a = document.querySelector('ytm-compact-video-renderer a[href*="/watch"], ytm-video-with-context-renderer a[href*="/watch"], ' +
+      'ytd-compact-video-renderer a[href*="/watch"], ytd-watch-next-secondary-results-renderer a[href*="/watch"], ' +
+      '.ytp-endscreen-content a.ytp-videowall-still');
+    if (a) { a.click(); return true; }
+    return false;
+  }
+
+  /** Si al terminar el video la página no pasó sola al siguiente (autoplay de YouTube), lo hace la app. */
+  document.addEventListener('ended', function(e) {
+    try {
+      if (!e.target || e.target.tagName !== 'VIDEO') return;
+      var ref = location.href;
+      setTimeout(function() {
+        try {
+          var v = vid();
+          if (!v || !v.ended || location.href !== ref) return;
+          var pl = document.querySelector('#movie_player, .html5-video-player');
+          if (pl && /ad-showing|ad-interrupting/.test(pl.className)) return;
+          if (window.TLD && window.TLD.dbg) window.TLD.dbg('Fin del video: pasando al siguiente');
+          goNext();
+        } catch (x) {}
+      }, 9500);
+    } catch (x) {}
+  }, true);
+
   window.__tldCmd = function(c, arg) {
     try {
       var v = vid();
@@ -2076,13 +2127,7 @@ class MainActivity : AppCompatActivity() {
         }
         return;
       }
-      if (c === 'next') {
-        var n = find('.ytp-next-button', /(siguiente|next)/i);
-        if (n) { n.click(); return; }
-        var a = document.querySelector('ytm-compact-video-renderer a[href*="/watch"], ytm-video-with-context-renderer a[href*="/watch"]');
-        if (a) a.click();
-        return;
-      }
+      if (c === 'next') { goNext(); return; }
       if (c === 'prev') {
         if (v && v.currentTime > 3) { v.currentTime = 0; return; }
         var p = find('.ytp-prev-button', /(anterior|previous)/i);

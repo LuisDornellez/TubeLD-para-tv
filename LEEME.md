@@ -90,3 +90,17 @@ Se activa solo en una TV de 1 GB de RAM o marcada por el sistema como de poca me
 ## Corrección 1.9.1 — Desplazamiento en TV
 - En modo flechas, al llegar al último elemento visible la página ahora baja de verdad (antes saltaba a la barra de abajo sin bajar).
 - Se desactiva el desplazamiento suave de la página para que el script detecte bien si se movió, y se prueban más contenedores con scroll propio.
+
+## 1.9.2 — Solo modo ratón (TV)
+- Se quitó el modo flechas y el botón que cambiaba de modo. En la TV las flechas siempre mueven el puntero dorado y OK hace clic.
+
+## 1.9.3 — Intento de inicio de sesión con Google
+- Se quita la cabecera `X-Requested-With` que delata al WebView (necesita Android System WebView 112 o más). Es lo que suele hacer que Google diga "navegador o app no seguros". No está garantizado: Google puede seguir bloqueando por otras señales. Si es así, usa la app sin iniciar sesión.
+
+## 1.9.4 — Revisión del puntero
+- Al volver a mostrar el puntero (por ejemplo al salir de pantalla completa o volver de las barras), si había quedado fuera de la página se mete dentro, para que no aparezca sobre las barras ni se mueva raro.
+- El desplazamiento ya no repite un barrido pesado en cada pulsación cuando la página llegó al final (menos trabas en TVs viejas).
+
+## 1.9.5 — Pasar al siguiente video
+- Si el video termina y la página no pasó sola al siguiente, la app lo hace a los 9,5 s (deja primero que actúe el autoplay de YouTube). Muestra el aviso «Fin del video: pasando al siguiente».
+- El botón Siguiente (notificación, mando y auriculares) ahora también funciona en la web de escritorio de YouTube (la que usa la TV): antes solo buscaba elementos de la versión móvil.

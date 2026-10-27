@@ -11,8 +11,8 @@ android {
         applicationId = "com.ld.tubeld"
         minSdk = 24
         targetSdk = 34
-        versionCode = 11
-        versionName = "1.9.1"
+        versionCode = 15
+        versionName = "1.9.5"
     }
 
     signingConfigs {
