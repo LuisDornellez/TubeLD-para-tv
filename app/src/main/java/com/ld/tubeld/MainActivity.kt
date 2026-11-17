@@ -205,8 +205,10 @@ class MainActivity : AppCompatActivity() {
         Media.onCommand = { cmd, arg -> runOnUiThread { runCmd(cmd, arg) } }
         Media.onDebug = { m -> runOnUiThread { android.widget.Toast.makeText(applicationContext, m, android.widget.Toast.LENGTH_LONG).show() } }
 
+        RemoteScript.load(applicationContext)
         setupWeb()
         installScripts()
+        RemoteScript.refresh(applicationContext) { runOnUiThread { installScripts() } }
 
         findViewById<ImageButton>(R.id.btnBack).setOnClickListener {
             if (web.canGoBack()) web.goBack()
@@ -917,11 +919,13 @@ class MainActivity : AppCompatActivity() {
             docScript?.remove()
             docScript = null
             val sb = StringBuilder()
+            sb.append(RemoteScript.wrapped())
             sb.append(JS_QUAL)
             if (lite) sb.append("window.__tldLite=true;")
             if (bgOn) sb.append(JS_VISIBLE)
             if (bgOn || isTv) sb.append(JS_MEDIA)
             if (adsOn) sb.append(JS_ADS)
+            sb.append(JS_FIX)
             if (isTv) sb.append(JS_TV).append(JS_NAV)
             if (!lite) sb.append(eqScript())
             if (sb.isNotEmpty() && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
@@ -937,11 +941,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun inject() {
         val sb = StringBuilder()
+        sb.append(RemoteScript.wrapped())
         sb.append(JS_QUAL)
             if (lite) sb.append("window.__tldLite=true;")
             if (bgOn) sb.append(JS_VISIBLE)
             if (bgOn || isTv) sb.append(JS_MEDIA)
         if (adsOn) sb.append(JS_ADS)
+        sb.append(JS_FIX)
         if (isTv) sb.append(JS_TV).append(JS_NAV)
         if (!lite) sb.append(eqScript())
         if (sb.isNotEmpty()) web.evaluateJavascript(sb.toString(), null)
@@ -2215,6 +2221,84 @@ class MainActivity : AppCompatActivity() {
     } catch (e) {}
   }
   setInterval(tick, 400);
+})();
+"""
+
+        /** Recupera el video cuando YouTube muestra "Algo salio mal / recarga la pagina" o el aviso anti-bloqueador. */
+        const val JS_FIX = """
+(function(){
+  if (window.__tldFix) return; window.__tldFix = true;
+  var tries = [], lastKey = '';
+  function vid() {
+    try { var m = location.search.match(/[?&]v=([\w-]{6,15})/); if (m) return m[1]; } catch (e) {}
+    try { var s = location.pathname.match(/\/(?:shorts|embed)\/([\w-]{6,15})/); if (s) return s[1]; } catch (e) {}
+    return '';
+  }
+  function player() { return document.querySelector('#movie_player') || document.querySelector('.html5-video-player'); }
+  function shown(el) {
+    if (!el) return false;
+    var r = el.getBoundingClientRect();
+    var st = getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && st.display !== 'none' && st.visibility !== 'hidden';
+  }
+  function errorShown() {
+    try {
+      var pl = player();
+      if (pl && pl.classList.contains('ytp-error')) return true;
+      var e = document.querySelector('.ytp-error, .ytp-error-content-wrap, ytm-player-error-view-model');
+      if (shown(e)) return true;
+      var t = document.querySelector('yt-playability-error-supported-renderers, ytd-playability-error-supported-renderers');
+      if (t && shown(t) && /(salió mal|went wrong|recarg|refresh|reload)/i.test(t.textContent || '')) return true;
+    } catch (e) {}
+    return false;
+  }
+  function killNag() {
+    try {
+      var sel = 'ytd-enforcement-message-view-model, tp-yt-paper-dialog.ytd-popup-container, ' +
+        'ytm-enforcement-message-view-model, #dialog.ytd-popup-container';
+      var nodes = document.querySelectorAll(sel), hit = false;
+      for (var i = 0; i < nodes.length; i++) {
+        var n = nodes[i];
+        if (/(bloqueador|ad blocker|anuncios|allow ads|enforcement)/i.test((n.textContent || '') + n.tagName)) {
+          n.remove(); hit = true;
+        }
+      }
+      if (hit) {
+        var bd = document.querySelectorAll('tp-yt-iron-overlay-backdrop, .ytd-popup-container.opened');
+        for (var j = 0; j < bd.length; j++) { try { bd[j].remove(); } catch (e) {} }
+        var v = document.querySelector('video');
+        if (v && v.paused) { try { v.play(); } catch (e) {} }
+      }
+    } catch (e) {}
+  }
+  function recover() {
+    var id = vid(); if (!id) return;
+    var now = Date.now();
+    tries = tries.filter(function(t) { return now - t < 90000; });
+    var v = document.querySelector('video');
+    var t = 0;
+    try { t = (v && isFinite(v.currentTime)) ? Math.floor(v.currentTime) : 0; } catch (e) {}
+    try { if (window.TLD && window.TLD.dbg) window.TLD.dbg('Reparando video (' + (tries.length + 1) + ')'); } catch (e) {}
+    tries.push(now);
+    var pl = player();
+    if (tries.length <= 2 && pl && typeof pl.loadVideoById === 'function') {
+      // 1.o y 2.o intento: recarga solo el reproductor, sin recargar la pagina
+      try { pl.loadVideoById(id, t); return; } catch (e) {}
+    }
+    if (tries.length <= 4) {
+      // 3.o y 4.o intento: recarga la pagina volviendo al mismo segundo
+      var u = location.origin + '/watch?v=' + id + (t > 3 ? '&t=' + t + 's' : '');
+      location.replace(u);
+    }
+  }
+  var bad = 0;
+  setInterval(function() {
+    killNag();
+    if (errorShown()) {
+      bad++;
+      if (bad >= 2) { bad = 0; recover(); }   // espera ~1,6 s para no confundirse con un parpadeo
+    } else { bad = 0; }
+  }, 800);
 })();
 """
     }
