@@ -15,8 +15,8 @@ import java.net.URL
  * - Si la descarga falla, no pasa nada: se sigue con la copia guardada o con el script interno.
  */
 object RemoteScript {
-    /** CAMBIA ESTO si tu repositorio publico tiene otro nombre: usuario/repositorio/rama/archivo */
-    const val SCRIPT_URL = "https://raw.githubusercontent.com/LuisDornellez/TubeLD-script-TV/main/tubeld.js"
+    /** CAMBIA ESTO si tu repositorio tiene otro nombre: usuario/repositorio/rama/archivo (debe ser publico) */
+    const val SCRIPT_URL = "https://raw.githubusercontent.com/LuisDornellez/TubeLD/main/tubeld.js"
 
     private const val FILE = "remote_tubeld.js"
     private const val MAX_BYTES = 400_000
@@ -42,17 +42,25 @@ object RemoteScript {
                 c.readTimeout = 8000
                 c.useCaches = false
                 c.setRequestProperty("Cache-Control", "no-cache")
-                if (c.responseCode != 200) return@Thread
+                if (c.responseCode != 200) {
+                    ErrorLog.add("REMOTO", "No se pudo bajar tubeld.js: HTTP ${c.responseCode} (revisa que el repositorio sea público y se llame como en SCRIPT_URL)")
+                    return@Thread
+                }
                 val text = c.inputStream.use { it.readBytes() }
                 if (text.isEmpty() || text.size > MAX_BYTES) return@Thread
                 val s = String(text, Charsets.UTF_8)
                 // Control basico: debe parecer JavaScript, no una pagina de error HTML
-                if (s.trimStart().startsWith("<")) return@Thread
+                if (s.trimStart().startsWith("<")) {
+                    ErrorLog.add("REMOTO", "tubeld.js no parece JavaScript (empieza con <)")
+                    return@Thread
+                }
                 if (s == code) return@Thread
                 File(ctx.filesDir, FILE).writeText(s)
                 code = s
+                ErrorLog.add("REMOTO", "tubeld.js actualizado (${s.length} caracteres)")
                 onNew()
-            } catch (_: Throwable) {
+            } catch (e: Throwable) {
+                ErrorLog.add("REMOTO", "Descarga fallida: $e")
             }
         }.start()
     }
@@ -61,6 +69,6 @@ object RemoteScript {
     fun wrapped(): String {
         val c = code
         if (c.isBlank()) return ""
-        return "try{\n$c\n}catch(e){try{console.log('tubeld remoto: '+e)}catch(_){}}\n"
+        return "try{\n$c\n}catch(e){try{window.TLD.log('REMOTO script: '+e)}catch(_){}}\n"
     }
 }

@@ -32,10 +32,20 @@ jobs:
       - name: Publicar APK en Releases
         env:
           GH_TOKEN: ${{ github.token }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
+          set -e
           cp app/build/outputs/apk/release/app-release.apk tubeLD.apk
+          # version.json: lo lee la app para avisar de actualizaciones
+          CODE=$((100 + ${{ github.run_number }}))
+          NAME=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          NOTES="${COMMIT_MSG:0:300}"
+          jq -n --argjson code "$CODE" --arg name "$NAME" \
+            --arg apk "https://github.com/${{ github.repository }}/releases/download/apk-latest/tubeLD.apk" \
+            --arg notes "${NOTES:-Mejoras y correcciones}" \
+            '{versionCode:$code,versionName:$name,apkUrl:$apk,notes:$notes}' > version.json
           gh release delete apk-latest --cleanup-tag -y || true
-          gh release create apk-latest tubeLD.apk \
+          gh release create apk-latest tubeLD.apk version.json \
             --target "${{ github.sha }}" \
             --title "tubeLD (compilación ${{ github.run_number }})" \
             --notes "APK compilado automáticamente. Compilación #${{ github.run_number }}."

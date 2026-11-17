@@ -122,6 +122,8 @@ class MainActivity : AppCompatActivity() {
 
     // ---- Descanso visual: tinte cálido (menos luz azul) y atenuado, encima de toda la app ----
     private lateinit var btnRest: ImageButton
+    private lateinit var btnErr: ImageButton
+    private var updateInfo: Updater.Info? = null
     private val restBg = LayerDrawable(arrayOf(ColorDrawable(0), ColorDrawable(0)))
     private var restOn = false
     private var restBlue = 50
@@ -185,6 +187,7 @@ class MainActivity : AppCompatActivity() {
         splash = findViewById(R.id.splash)
         btnExit = findViewById(R.id.btnExit)
         btnRest = findViewById(R.id.btnRest)
+        btnErr = findViewById(R.id.btnErr)
         btnNav = findViewById(R.id.btnNav)
         btnQuality = findViewById(R.id.btnQuality)
         navMode = false // solo modo ratón
@@ -205,6 +208,8 @@ class MainActivity : AppCompatActivity() {
         Media.onCommand = { cmd, arg -> runOnUiThread { runCmd(cmd, arg) } }
         Media.onDebug = { m -> runOnUiThread { android.widget.Toast.makeText(applicationContext, m, android.widget.Toast.LENGTH_LONG).show() } }
 
+        ErrorLog.install(applicationContext)
+        ErrorLog.add("APP", "Inicio de la app")
         RemoteScript.load(applicationContext)
         setupWeb()
         installScripts()
@@ -262,6 +267,8 @@ class MainActivity : AppCompatActivity() {
         pressFx(btnTheme)
         pressFx(btnExit)
         pressFx(btnRest)
+        pressFx(btnErr)
+        btnErr.setOnClickListener { showErrorsDialog() }
         btnRest.setOnClickListener { showRestDialog() }
         btnQuality.setOnClickListener { showQualityDialog() }
         btnNav.visibility = View.GONE // sin botón: solo modo ratón
@@ -274,6 +281,7 @@ class MainActivity : AppCompatActivity() {
         }
         applyNavMode()
         btnExit.setOnClickListener { showExitDialog() }
+        findViewById<ImageButton>(R.id.btnReload).setOnLongClickListener { showErrorsDialog(); true }
         if (savedInstanceState == null) {
             showSplash()
         } else {
@@ -301,6 +309,14 @@ class MainActivity : AppCompatActivity() {
             web.restoreState(savedInstanceState)
         }
 
+        tvBadge.setOnClickListener { checkUpdate(true) }
+        Updater.schedule(applicationContext)
+        if (intent?.getBooleanExtra("update", false) == true) {
+            handler.postDelayed({ checkUpdate(true) }, 1500)
+        } else {
+            handler.postDelayed({ checkUpdate(false) }, 5000)
+        }
+
         if (Build.VERSION.SDK_INT >= 33 && !lite &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
             != PackageManager.PERMISSION_GRANTED
@@ -314,6 +330,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (intent.getBooleanExtra("update", false)) checkUpdate(true)
         val target = intent.data?.toString()
         if (target != null && target.startsWith("https://")) web.loadUrl(target)
     }
@@ -374,6 +391,7 @@ class MainActivity : AppCompatActivity() {
         val l = ArrayList<View>()
         val bb = bottomBar as ViewGroup
         for (i in 0 until bb.childCount) l.add(bb.getChildAt(i))
+        l.add(btnErr)
         l.add(btnRest)
         l.add(btnTheme)
         l.add(btnExit)
@@ -393,7 +411,7 @@ class MainActivity : AppCompatActivity() {
         topBar.setPadding(dp(36), 0, dp(28), 0)
         tvLogo.textSize = if (lite) 24f else 28f
         val bs = if (lite) 44 else 52
-        for (b in listOf(btnNav, btnRest, btnTheme, btnExit)) {
+        for (b in listOf(btnNav, btnErr, btnRest, btnTheme, btnExit)) {
             size(b, dp(bs), dp(bs))
             b.setPadding(dp(10), dp(10), dp(10), dp(10))
         }
@@ -419,7 +437,7 @@ class MainActivity : AppCompatActivity() {
     private fun applyFocusRings() {
         val p = Pal.cur
         for (v in tvFocusables()) {
-            val top = v === btnNav || v === btnRest || v === btnTheme || v === btnExit
+            val top = v === btnNav || v === btnErr || v === btnRest || v === btnTheme || v === btnExit
             val ring = GradientDrawable().apply {
                 cornerRadius = dp(16).toFloat()
                 setColor(withA(p.gold, 0x26))
@@ -847,6 +865,33 @@ class MainActivity : AppCompatActivity() {
                 return null
             }
 
+            override fun onReceivedError(
+                view: WebView,
+                request: WebResourceRequest,
+                error: android.webkit.WebResourceError
+            ) {
+                if (request.isForMainFrame) {
+                    ErrorLog.add("RED", "No cargó la página ${request.url}: ${error.description} (código ${error.errorCode})")
+                }
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView,
+                request: WebResourceRequest,
+                errorResponse: WebResourceResponse
+            ) {
+                val u = request.url.toString()
+                val vital = u.contains("videoplayback") || u.contains("youtubei") || u.contains("/player")
+                if (request.isForMainFrame || (errorResponse.statusCode >= 400 && vital)) {
+                    ErrorLog.add("HTTP", "${errorResponse.statusCode} en ${u.take(160)}")
+                }
+            }
+
+            override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
+                ErrorLog.add("WEBVIEW", "El proceso de la página se cerró (crash=${detail.didCrash()})")
+                return false
+            }
+
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
                 super.onPageStarted(view, url, favicon)
                 inject()
@@ -919,7 +964,8 @@ class MainActivity : AppCompatActivity() {
             docScript?.remove()
             docScript = null
             val sb = StringBuilder()
-            sb.append(RemoteScript.wrapped())
+            sb.append(JS_LOG)
+        sb.append(RemoteScript.wrapped())
             sb.append(JS_QUAL)
             if (lite) sb.append("window.__tldLite=true;")
             if (bgOn) sb.append(JS_VISIBLE)
@@ -941,6 +987,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun inject() {
         val sb = StringBuilder()
+        sb.append(JS_LOG)
         sb.append(RemoteScript.wrapped())
         sb.append(JS_QUAL)
             if (lite) sb.append("window.__tldLite=true;")
@@ -1009,6 +1056,7 @@ class MainActivity : AppCompatActivity() {
         btnTheme.setImageResource(if (to.night) R.drawable.ic_sun else R.drawable.ic_moon)
         tintIcon(btnTheme, true)
         tintIcon(btnExit, false)
+        tintIcon(btnErr, false)
         paint()
 
         if (animate && !lite && from != null && from !== to) {
@@ -1115,7 +1163,117 @@ class MainActivity : AppCompatActivity() {
             .setMessage("Se cerrará la app y se detendrá lo que esté sonando.")
             .setPositiveButton("Salir") { _, _ -> runCmd(Media.CLOSE, 0) }
             .setNegativeButton("Seguir viendo", null)
+            .setNeutralButton("Ver errores") { _, _ -> showErrorsDialog() }
             .show()
+    }
+
+    // ---------- actualizaciones ----------
+
+    /** Busca una versión nueva. manual = el usuario lo pidió (siempre muestra el resultado). */
+    private fun checkUpdate(manual: Boolean) {
+        if (manual) toast("Buscando actualización…")
+        Updater.check(applicationContext) { info ->
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                updateInfo = info
+                updateBadge()
+                if (info != null) {
+                    Updater.notifyNew(applicationContext, info)
+                    if (manual || prefs.getLong("upd_skip", 0L) != info.code) showUpdateDialog(info)
+                } else if (manual) {
+                    toast("Ya tienes la última versión (${Updater.installedName(this)})")
+                }
+            }
+        }
+    }
+
+    private fun showUpdateDialog(info: Updater.Info) {
+        val msg = "Nueva versión ${info.name} (tienes ${Updater.installedName(this)})." +
+            (if (info.notes.isNotBlank()) "\n\n" + info.notes else "")
+        MaterialAlertDialogBuilder(dlgCtx())
+            .setTitle("Actualización disponible")
+            .setMessage(msg)
+            .setPositiveButton("Actualizar ahora") { _, _ -> startUpdate(info) }
+            .setNegativeButton("Más tarde") { _, _ ->
+                prefs.edit().putLong("upd_skip", info.code).apply()
+            }
+            .show()
+    }
+
+    private fun startUpdate(info: Updater.Info) {
+        if (!Updater.canInstall(this)) {
+            toast("Activa «Permitir de esta fuente» para tubeLD y vuelve a tocar Actualizar")
+            Updater.openInstallSettings(this)
+            return
+        }
+        val tv = android.widget.TextView(this).apply {
+            text = "Descargando… 0%"
+            textSize = 16f
+            setPadding(dp(24), dp(20), dp(24), dp(20))
+            setTextColor(if (Pal.cur.night) 0xFFEEEEEE.toInt() else 0xFF222222.toInt())
+        }
+        val d = MaterialAlertDialogBuilder(dlgCtx())
+            .setTitle("Actualizando tubeLD")
+            .setView(tv)
+            .setCancelable(false)
+            .show()
+        Updater.download(applicationContext, info, { p ->
+            runOnUiThread { tv.text = "Descargando… $p%" }
+        }) { f ->
+            runOnUiThread {
+                try {
+                    d.dismiss()
+                } catch (_: Exception) {
+                }
+                if (f == null) {
+                    toast("No se pudo descargar la actualización (mira el registro de errores 🐞)")
+                } else {
+                    toast("Toca «Instalar» en la ventana de Android")
+                    Updater.install(this, f)
+                }
+            }
+        }
+    }
+
+    /** Muestra el registro de errores; se puede copiar o compartir para dárselo a una IA. */
+    private fun showErrorsDialog() {
+        val txt = ErrorLog.dump(this)
+        val intro = "Estos son los errores de mi app Android TubeLD (WebView con YouTube). " +
+            "Analízalos, dime la causa y dame el código corregido:\n\n"
+        val tv = android.widget.TextView(this).apply {
+            text = txt
+            textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            setTextColor(if (Pal.cur.night) 0xFFEEEEEE.toInt() else 0xFF222222.toInt())
+        }
+        val sv = android.widget.ScrollView(this).apply { addView(tv) }
+        MaterialAlertDialogBuilder(dlgCtx())
+            .setTitle("Errores y registro")
+            .setView(sv)
+            .setPositiveButton("Copiar") { _, _ ->
+                val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("TubeLD errores", intro + txt))
+                toast("Copiado: pégalo en tu IA")
+            }
+            .setNeutralButton("Compartir") { _, _ ->
+                try {
+                    val i = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, intro + txt)
+                    }
+                    startActivity(Intent.createChooser(i, "Compartir errores"))
+                } catch (_: Exception) {
+                    toast("No hay app para compartir")
+                }
+            }
+            .setNegativeButton("Borrar") { _, _ ->
+                ErrorLog.clear()
+                toast("Registro borrado")
+            }
+            .show()
+        sv.post { sv.fullScroll(View.FOCUS_DOWN) }
     }
 
     /** Fondos que cambian con suavidad al pasar de día a noche. */
@@ -1195,7 +1353,15 @@ class MainActivity : AppCompatActivity() {
         tint(btnQuality, false)
         tintIcon(btnNav, true)
         tintIcon(btnRest, restOn)
-        tvBadge.text = if (adsOn) "Sin anuncios" else "Anuncios permitidos"
+        updateBadge()
+    }
+
+    private fun updateBadge() {
+        tvBadge.text = when {
+            updateInfo != null -> "Actualización ⬆"
+            adsOn -> "Sin anuncios"
+            else -> "Anuncios permitidos"
+        }
     }
 
     private fun tintIcon(b: ImageButton, on: Boolean) {
@@ -2112,7 +2278,7 @@ class MainActivity : AppCompatActivity() {
           if (!v || !v.ended || location.href !== ref) return;
           var pl = document.querySelector('#movie_player, .html5-video-player');
           if (pl && /ad-showing|ad-interrupting/.test(pl.className)) return;
-          if (window.TLD && window.TLD.dbg) window.TLD.dbg('Fin del video: pasando al siguiente');
+          if (window.TLD && window.TLD.log) window.TLD.log('Fin del video: pasando al siguiente');
           goNext();
         } catch (x) {}
       }, 9500);
@@ -2161,9 +2327,6 @@ class MainActivity : AppCompatActivity() {
     } catch (e) {}
     return r;
   }
-  var NOCLEAN = false;
-  try { NOCLEAN = Number(localStorage.getItem('tld_noclean') || 0) > Date.now(); } catch (e) {}
-  if (!NOCLEAN) {
   try {
     var _parse = JSON.parse;
     JSON.parse = function() { return clean(_parse.apply(this, arguments)); };
@@ -2182,7 +2345,6 @@ class MainActivity : AppCompatActivity() {
       set: function(v) { _ipr = clean(v); }
     });
   } catch (e) {}
-  }
 
   var css = 'ytd-ad-slot-renderer, ytm-promoted-sparkles-web-renderer, ytm-promoted-video-renderer, ' +
     'ytm-companion-ad-renderer, ytm-display-ad-renderer, ytd-display-ad-renderer, ' +
@@ -2284,16 +2446,13 @@ class MainActivity : AppCompatActivity() {
     var v = document.querySelector('video');
     var t = 0;
     try { t = (v && isFinite(v.currentTime)) ? Math.floor(v.currentTime) : 0; } catch (e) {}
-    try { if (window.TLD && window.TLD.dbg) window.TLD.dbg('Reparando video (' + (tries.length + 1) + ')'); } catch (e) {}
+    try { if (window.TLD && window.TLD.dbg) window.TLD.log('Reparando video, intento ' + (tries.length + 1) + ' · ' + location.href.slice(0, 100)); } catch (e) {}
     tries.push(now);
+    try { var hh = player(); window.TLD.log('Error de reproductor: ' + ((hh && hh.innerText) || '').replace(/\s+/g, ' ').slice(0, 160)); } catch (e) {}
     var pl = player();
     if (tries.length <= 2 && pl && typeof pl.loadVideoById === 'function') {
       // 1.o y 2.o intento: recarga solo el reproductor, sin recargar la pagina
       try { pl.loadVideoById(id, t); return; } catch (e) {}
-    }
-    if (tries.length >= 3) {
-      // Plan B: si sigue fallando, desactiva 30 min la limpieza de datos de anuncios (suele ser la causa del error)
-      try { localStorage.setItem('tld_noclean', String(Date.now() + 1800000)); } catch (e) {}
     }
     if (tries.length <= 4) {
       // 3.o y 4.o intento: recarga la pagina volviendo al mismo segundo
@@ -2309,6 +2468,36 @@ class MainActivity : AppCompatActivity() {
       if (bad >= 2) { bad = 0; recover(); }   // espera ~1,6 s para no confundirse con un parpadeo
     } else { bad = 0; }
   }, 800);
+})();
+"""
+
+        /** Envía los errores de JavaScript de la página al registro de errores de la app. */
+        const val JS_LOG = """
+(function(){
+  if (window.__tldLog) return; window.__tldLog = true;
+  var n = 0;
+  function send(m) { try { if (n++ < 150 && window.TLD && window.TLD.log) window.TLD.log(String(m).slice(0, 600)); } catch (e) {} }
+  window.addEventListener('error', function(e) {
+    var t = e && e.target;
+    if (t && t !== window && t.tagName) return;
+    send('JS error: ' + (e.message || '?') + ' @' + String(e.filename || '').split('/').pop() + ':' + (e.lineno || 0));
+  }, true);
+  window.addEventListener('unhandledrejection', function(e) {
+    var r = e && e.reason;
+    send('Promesa rechazada: ' + ((r && (r.stack || r.message)) || r));
+  });
+  try {
+    var oe = console.error;
+    console.error = function() {
+      try {
+        send('console.error: ' + Array.prototype.slice.call(arguments).map(function(a) {
+          try { return typeof a === 'string' ? a : JSON.stringify(a); } catch (x) { return String(a); }
+        }).join(' '));
+      } catch (x) {}
+      return oe.apply(console, arguments);
+    };
+  } catch (e) {}
+  send('Página: ' + location.href.slice(0, 120));
 })();
 """
     }

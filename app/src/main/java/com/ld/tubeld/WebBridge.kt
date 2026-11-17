@@ -42,4 +42,10 @@ class WebBridge {
     fun dbg(msg: String?) {
         Media.onDebug?.invoke((msg ?: "").take(160))
     }
+
+    /** Errores de JavaScript de la página: van al registro de errores. */
+    @JavascriptInterface
+    fun log(msg: String?) {
+        ErrorLog.add("JS", (msg ?: "").take(600))
+    }
 }

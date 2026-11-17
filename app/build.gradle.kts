@@ -11,8 +11,9 @@ android {
         applicationId = "com.ld.tubeld"
         minSdk = 24
         targetSdk = 34
-        versionCode = 15
-        versionName = "1.9.5"
+        // En GitHub Actions el número sube solo con cada compilación (para poder actualizar)
+        versionCode = 100 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0)
+        versionName = "1.9.6"
     }
 
     signingConfigs {
