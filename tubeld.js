@@ -14,6 +14,9 @@
  *   window.__tldAds  = true;   // bloqueo de anuncios interno
  *   window.__tldTv   = true;   // ajustes de TV
  *   window.__tldNav  = true;   // navegacion con puntero
+ * Tamano de la pagina en TV (por defecto 1600): mas grande = todo mas pequeno y se ve mas de la
+ * columna de videos de la derecha. Para cambiarlo, quita las // de la linea de abajo:
+ *   // window.__tldWidth = 1800;
  * Si algo de aqui falla, la app lo ignora y sigue funcionando.
  * Version del script: 1
  */

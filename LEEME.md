@@ -118,3 +118,8 @@ Se activa solo en una TV de 1 GB de RAM o marcada por el sistema como de poca me
 - Al tocar *Actualizar ahora* descarga el APK, comprueba que sea de tubeLD y más nuevo, y abre el instalador de Android. Android siempre pide tocar **Instalar** (no se puede evitar sin root). La primera vez pide activar «Permitir de esta fuente».
 - El número de versión (`versionCode`) sube solo en cada compilación (100 + número de compilación).
 - Si tu repositorio no se llama `TubeLD-para-tv` (usuario `LuisDornellez`), cambia `INFO_URL` en `Updater.kt` y `SCRIPT_URL` en `RemoteScript.kt`.
+
+## Tamaño de la página en TV
+- En Smart TV la página de escritorio de YouTube se maqueta ahora con un ancho de **1600 px** (antes se veía enorme y la columna de videos de la derecha casi no se veía). `JS_VIEW` en MainActivity.kt; el texto vuelve a tamaño normal (100 %).
+- **Para ajustarlo sin reinstalar:** en `tubeld.js` agrega `window.__tldWidth = 1800;` (más grande = todo más pequeño; más chico = más grande, por ejemplo 1400). Se aplica al reabrir la app.
+- El desplazamiento y los toques del puntero se corrigen automáticamente según ese ancho (`Media.cssW`).

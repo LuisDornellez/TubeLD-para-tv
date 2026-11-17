@@ -607,7 +607,7 @@ class MainActivity : AppCompatActivity() {
                 val x = p[0].toFloatOrNull()
                 val y = p[1].toFloatOrNull()
                 if (x != null && y != null) {
-                    val d = resources.displayMetrics.density
+                    val d = pxPerCss()
                     sendTap(web, x * d, y * d)
                 }
             }
@@ -765,8 +765,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Desplaza la página y apunta si ya no se pudo bajar/subir más (la próxima vez pasa a la barra). */
+    /** Píxeles de pantalla por cada píxel CSS de la página (cambia si se amplía el ancho de la página en TV). */
+    private fun pxPerCss(): Float {
+        val w = Media.cssW
+        return if (w > 0 && web.width > 0) (web.width / w).toFloat() else resources.displayMetrics.density
+    }
+
     private fun scrollPage(goingDown: Boolean, px: Float, x: Float, y: Float, b: RectF) {
-        val d = resources.displayMetrics.density
+        val d = pxPerCss()
         val mag = (px / d * 2.2f).toInt()
         val css = if (goingDown) mag else -mag
         val cx = ((x - b.left) / d).toInt()
@@ -828,6 +834,11 @@ class MainActivity : AppCompatActivity() {
         s.mediaPlaybackRequiresUserGesture = false
         s.userAgentString = if (isTv && !lite) UA_TV else UA
         if (isTv) s.textZoom = if (lite) TV_TEXT_ZOOM_LITE else TV_TEXT_ZOOM
+        if (isTv && !lite) {
+            // Página de escritorio más ancha (JS_VIEW): todo se ve más pequeño y entra la columna de videos de la derecha
+            s.useWideViewPort = true
+            s.loadWithOverviewMode = true
+        }
         // Quita la cabecera X-Requested-With (nombre del paquete) que delata al WebView; Google la usa para bloquear el inicio de sesion.
         try {
             if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
@@ -972,6 +983,7 @@ class MainActivity : AppCompatActivity() {
             if (bgOn || isTv) sb.append(JS_MEDIA)
             if (adsOn) sb.append(JS_ADS)
             sb.append(JS_FIX)
+            if (isTv && !lite) sb.append(JS_VIEW)
             if (isTv) sb.append(JS_TV).append(JS_NAV)
             if (!lite) sb.append(eqScript())
             if (sb.isNotEmpty() && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
@@ -995,6 +1007,7 @@ class MainActivity : AppCompatActivity() {
             if (bgOn || isTv) sb.append(JS_MEDIA)
         if (adsOn) sb.append(JS_ADS)
         sb.append(JS_FIX)
+        if (isTv && !lite) sb.append(JS_VIEW)
         if (isTv) sb.append(JS_TV).append(JS_NAV)
         if (!lite) sb.append(eqScript())
         if (sb.isNotEmpty()) web.evaluateJavascript(sb.toString(), null)
@@ -1722,7 +1735,7 @@ class MainActivity : AppCompatActivity() {
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/124.0.0.0 Safari/537.36"
         /** Agranda un poco el texto para leerlo desde el sofá. */
-        const val TV_TEXT_ZOOM = 120
+        const val TV_TEXT_ZOOM = 100
         /** En modo ligero (web móvil) el texto se agranda más. */
         const val TV_TEXT_ZOOM_LITE = 120
         const val UA =
@@ -2498,6 +2511,40 @@ class MainActivity : AppCompatActivity() {
     };
   } catch (e) {}
   send('Página: ' + location.href.slice(0, 120));
+})();
+"""
+
+        /**
+         * En TV: la página de escritorio se maqueta con un ancho mayor (por defecto 1600 px CSS), así el
+         * reproductor deja de ser enorme y se ve bien la columna de videos de la derecha.
+         * Se puede cambiar desde tubeld.js con: window.__tldWidth = 1800;  (más grande = todo más pequeño)
+         */
+        const val JS_VIEW = """
+(function(){
+  if (window.__tldView) return; window.__tldView = true;
+  var W = Number(window.__tldWidth) || 1600;
+  function apply() {
+    try {
+      var h = document.head || document.documentElement;
+      if (!h) return false;
+      var m = document.querySelector('meta[name=viewport]');
+      if (!m) { m = document.createElement('meta'); m.setAttribute('name', 'viewport'); h.appendChild(m); }
+      var v = 'width=' + W;
+      if (m.getAttribute('content') !== v) m.setAttribute('content', v);
+      return true;
+    } catch (e) { return false; }
+  }
+  function report() { try { if (window.TLD && window.TLD.vw) window.TLD.vw(window.innerWidth); } catch (e) {} }
+  if (!apply()) {
+    var n = 0, t = setInterval(function() { if (apply() || ++n > 100) clearInterval(t); }, 30);
+  }
+  try {
+    new MutationObserver(function() { apply(); }).observe(document.documentElement, { childList: true, subtree: true });
+  } catch (e) {}
+  report();
+  window.addEventListener('resize', report);
+  window.addEventListener('load', function() { apply(); report(); });
+  setInterval(report, 2000);
 })();
 """
     }

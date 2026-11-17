@@ -29,6 +29,9 @@ object Media {
     /** La pone la actividad: muestra un aviso con información de diagnóstico que llega de la página. */
     @Volatile var onDebug: ((String) -> Unit)? = null
 
+    /** Ancho de la página en píxeles CSS (lo informa JS_VIEW); sirve para convertir toques y desplazamientos. */
+    @Volatile var cssW: Double = 0.0
+
     /** Niveles (0..1) de 6 bandas que mide la página cuando el ecualizador está encendido. */
     @Volatile var levels = FloatArray(6)
     @Volatile var levelsAt = 0L

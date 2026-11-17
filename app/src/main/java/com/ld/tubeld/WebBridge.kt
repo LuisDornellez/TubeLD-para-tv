@@ -48,4 +48,10 @@ class WebBridge {
     fun log(msg: String?) {
         ErrorLog.add("JS", (msg ?: "").take(600))
     }
+
+    /** Ancho de la página en píxeles CSS. */
+    @JavascriptInterface
+    fun vw(w: Double) {
+        if (w.isFinite() && w in 200.0..6000.0) Media.cssW = w
+    }
 }
