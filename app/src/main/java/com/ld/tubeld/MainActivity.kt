@@ -1257,12 +1257,17 @@ class MainActivity : AppCompatActivity() {
             text = txt
             textSize = 11f
             typeface = android.graphics.Typeface.MONOSPACE
-            setTextIsSelectable(true)
+            isFocusable = false
+            isFocusableInTouchMode = false
             setPadding(dp(16), dp(8), dp(16), dp(8))
             setTextColor(if (Pal.cur.night) 0xFFEEEEEE.toInt() else 0xFF222222.toInt())
         }
-        val sv = android.widget.ScrollView(this).apply { addView(tv) }
-        MaterialAlertDialogBuilder(dlgCtx())
+        val sv = android.widget.ScrollView(this).apply {
+            isFocusable = false
+            isFocusableInTouchMode = false
+            addView(tv)
+        }
+        val dlg = MaterialAlertDialogBuilder(dlgCtx())
             .setTitle("Errores y registro")
             .setView(sv)
             .setPositiveButton("Copiar") { _, _ ->
@@ -1285,7 +1290,27 @@ class MainActivity : AppCompatActivity() {
                 ErrorLog.clear()
                 toast("Registro borrado")
             }
-            .show()
+            .create()
+        // Control remoto: arriba/abajo desplazan el texto; izquierda/derecha pasan entre los botones.
+        dlg.setOnKeyListener { d, code, ev ->
+            if (ev.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+            val ad = d as androidx.appcompat.app.AlertDialog
+            val btns = listOf(
+                ad.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL),
+                ad.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE),
+                ad.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
+            ).filter { it != null && it.visibility == View.VISIBLE }
+            val i = btns.indexOfFirst { it.hasFocus() }
+            when (code) {
+                KeyEvent.KEYCODE_DPAD_DOWN -> { sv.smoothScrollBy(0, dp(120)); true }
+                KeyEvent.KEYCODE_DPAD_UP -> { sv.smoothScrollBy(0, -dp(120)); true }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> { btns.getOrNull((i + 1).coerceAtMost(btns.size - 1))?.requestFocus(); true }
+                KeyEvent.KEYCODE_DPAD_LEFT -> { btns.getOrNull((i - 1).coerceAtLeast(0))?.requestFocus(); true }
+                else -> false
+            }
+        }
+        dlg.show()
+        dlg.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.requestFocus()
         sv.post { sv.fullScroll(View.FOCUS_DOWN) }
     }
 

@@ -21,6 +21,8 @@
  * Version del script: 1
  */
 
+window.__tldWidth = 2000; // más grande = reproductor más chico (prueba 1800, 2000, 2200)
+
 // Ejemplo: CSS extra para ocultar cosas de la pagina (borra o edita a gusto)
 (function () {
   var css = [
