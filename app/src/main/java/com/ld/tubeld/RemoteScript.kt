@@ -16,7 +16,7 @@ import java.net.URL
  */
 object RemoteScript {
     /** CAMBIA ESTO si tu repositorio tiene otro nombre: usuario/repositorio/rama/archivo (debe ser publico) */
-    const val SCRIPT_URL = "https://raw.githubusercontent.com/LuisDornellez/TubeLD/main/tubeld.js"
+    const val SCRIPT_URL = "https://raw.githubusercontent.com/LuisDornellez/TubeLD-para-tv/main/tubeld.js"
 
     private const val FILE = "remote_tubeld.js"
     private const val MAX_BYTES = 400_000

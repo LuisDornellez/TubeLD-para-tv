@@ -2,7 +2,7 @@
  * tubeld.js  -  Script remoto de TubeLD
  * ------------------------------------------------------------------
  * Este archivo vive en tu repositorio PUBLICO de GitHub:
- *   https://github.com/LuisDornellez/TubeLD
+ *   https://github.com/LuisDornellez/TubeLD-para-tv
  * La app lo descarga sola cada vez que se abre. Para corregir algo:
  *   GitHub -> tubeld.js -> lapiz (Edit) -> cambiar -> "Commit changes".
  * No hay que recompilar ni reinstalar la app. Se aplica al reabrir la app.

@@ -27,7 +27,7 @@ import java.net.URL
  */
 object Updater {
     /** Lo genera solo el workflow al compilar y lo sube a la release apk-latest (el repositorio debe ser público). */
-    const val INFO_URL = "https://github.com/LuisDornellez/TubeLD/releases/download/apk-latest/version.json"
+    const val INFO_URL = "https://github.com/LuisDornellez/TubeLD-para-tv/releases/download/apk-latest/version.json"
 
     private const val CHANNEL = "tubeld_update"
     private const val JOB_ID = 4711
