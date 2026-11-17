@@ -2161,6 +2161,9 @@ class MainActivity : AppCompatActivity() {
     } catch (e) {}
     return r;
   }
+  var NOCLEAN = false;
+  try { NOCLEAN = Number(localStorage.getItem('tld_noclean') || 0) > Date.now(); } catch (e) {}
+  if (!NOCLEAN) {
   try {
     var _parse = JSON.parse;
     JSON.parse = function() { return clean(_parse.apply(this, arguments)); };
@@ -2179,6 +2182,7 @@ class MainActivity : AppCompatActivity() {
       set: function(v) { _ipr = clean(v); }
     });
   } catch (e) {}
+  }
 
   var css = 'ytd-ad-slot-renderer, ytm-promoted-sparkles-web-renderer, ytm-promoted-video-renderer, ' +
     'ytm-companion-ad-renderer, ytm-display-ad-renderer, ytd-display-ad-renderer, ' +
@@ -2247,6 +2251,8 @@ class MainActivity : AppCompatActivity() {
       if (pl && pl.classList.contains('ytp-error')) return true;
       var e = document.querySelector('.ytp-error, .ytp-error-content-wrap, ytm-player-error-view-model');
       if (shown(e)) return true;
+      var host = pl || document.querySelector('#player') || document.querySelector('#player-container');
+      if (host && shown(host) && /(se produjo un error|actualiza la p[aá]gina|algo sali[oó] mal|an error occurred|something went wrong|refresh the page)/i.test(host.innerText || '')) return true;
       var t = document.querySelector('yt-playability-error-supported-renderers, ytd-playability-error-supported-renderers');
       if (t && shown(t) && /(salió mal|went wrong|recarg|refresh|reload)/i.test(t.textContent || '')) return true;
     } catch (e) {}
@@ -2284,6 +2290,10 @@ class MainActivity : AppCompatActivity() {
     if (tries.length <= 2 && pl && typeof pl.loadVideoById === 'function') {
       // 1.o y 2.o intento: recarga solo el reproductor, sin recargar la pagina
       try { pl.loadVideoById(id, t); return; } catch (e) {}
+    }
+    if (tries.length >= 3) {
+      // Plan B: si sigue fallando, desactiva 30 min la limpieza de datos de anuncios (suele ser la causa del error)
+      try { localStorage.setItem('tld_noclean', String(Date.now() + 1800000)); } catch (e) {}
     }
     if (tries.length <= 4) {
       // 3.o y 4.o intento: recarga la pagina volviendo al mismo segundo
